@@ -82,15 +82,26 @@ jobs:
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
 
+      - name: Generate release notes props
+        run: |
+          # Write release notes into an MSBuild file to avoid shell quoting issues
+          RELEASE_NOTES=$(cat release-notes.md)
+          cat > release-notes.props <<PROPSEOF
+          <Project>
+            <PropertyGroup>
+              <PackageReleaseNotes><![CDATA[$RELEASE_NOTES]]></PackageReleaseNotes>
+            </PropertyGroup>
+          </Project>
+          PROPSEOF
+
       - name: Pack
         run: |
-          RELEASE_NOTES=$(cat release-notes.md)
           dotnet pack src/DotLens/DotLens.csproj \
             --configuration Release \
             --no-build \
             --output ./artifacts \
             -p:Version=${{ steps.version.outputs.nuget_version }} \
-            -p:PackageReleaseNotes="$RELEASE_NOTES"
+            -p:CustomAfterMicrosoftCommonTargets=$PWD/release-notes.props
 
       - name: Create GitHub Release
         run: |
