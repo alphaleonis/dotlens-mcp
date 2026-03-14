@@ -77,7 +77,7 @@ jobs:
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.nuget_version }}
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
@@ -89,6 +89,7 @@ jobs:
             --configuration Release \
             --no-build \
             --output ./artifacts \
+            -p:Version=${{ steps.version.outputs.nuget_version }} \
             -p:PackageReleaseNotes="$RELEASE_NOTES"
 
       - name: Create GitHub Release
