@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## v1.0.0
+## v1.0.1
 
 Initial public release of DotLens — an MCP server providing 54 AI-optimized tools for .NET/C# semantic code analysis, built on Roslyn.
 
