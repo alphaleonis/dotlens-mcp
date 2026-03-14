@@ -1,0 +1,63 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. Include the tool name if applicable (e.g., `find_references`, `get_diagnostics`).
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the issue? Include tool input if possible.
+      placeholder: |
+        1. Load solution with `load_solution`
+        2. Call `find_references` with ...
+        3. See error ...
+
+  - type: input
+    id: version
+    attributes:
+      label: DotLens version
+      description: Run `dotlens --version` or check the NuGet package version.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet-version
+    attributes:
+      label: .NET version
+      description: Output of `dotnet --version`
+      placeholder: "10.0.100"
+
+  - type: input
+    id: mcp-client
+    attributes:
+      label: MCP client
+      description: Which MCP client are you using?
+      placeholder: "Claude Code, Cursor, VS Code, etc."
