@@ -5,6 +5,4 @@ workflow: TrunkBased/preview1
 assembly-versioning-scheme: MajorMinorPatch
 assembly-file-versioning-scheme: MajorMinorPatch
 
-# Starting version for the public release
-next-version: 1.0.1
 
