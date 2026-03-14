@@ -1,0 +1,8 @@
+# EditorConfig for test projects
+# Inherits from root .editorconfig
+
+[*.cs]
+# CS8602: Dereference of a possibly null reference
+# Suppressed in tests because mock objects from FakeItEasy return non-null values
+# but the compiler cannot verify this at compile time
+dotnet_diagnostic.CS8602.severity = none

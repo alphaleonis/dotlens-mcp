@@ -1,0 +1,35 @@
+# Auto detect text files and normalize line endings
+# Stores LF in repo, checks out with native line endings (CRLF on Windows, LF on Linux/Mac)
+* text=auto
+
+# Ensure these are always treated as text
+*.cs text
+*.csproj text
+*.sln text
+*.slnx text
+*.props text
+*.targets text
+*.json text
+*.xml text
+*.yaml text
+*.yml text
+*.md text
+*.txt text
+*.editorconfig text
+
+# Scripts - preserve intended line endings
+*.sh text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.nupkg binary

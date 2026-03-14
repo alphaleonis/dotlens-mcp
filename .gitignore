@@ -1,0 +1,33 @@
+# Windows reserved filenames
+nul
+
+# Build outputs
+bin/
+obj/
+artifacts/
+
+# IDE
+.vs/
+
+# Vestige/FastEmbed cache
+.fastembed_cache/
+
+# Beans (issue tracking in separate private repo)
+.beans/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local tool data
+.serena/
+.claude/settings.local.json
+
+# Test results
+TestResults/
+.notices-tmp.json

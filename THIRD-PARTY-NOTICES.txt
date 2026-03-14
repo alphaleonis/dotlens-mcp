@@ -1,0 +1,88 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+=============================================
+
+DotLens incorporates third-party software components listed below.
+The original copyright notices and license terms are provided for
+informational purposes.
+
+-------------------------------------------------------------
+GitVersion.MsBuild 6.5.1
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/GitTools/GitVersion
+Copyright: Copyright GitTools 2025.
+
+-------------------------------------------------------------
+Microsoft.CodeAnalysis.CSharp.Features 5.0.0
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/dotnet/roslyn
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.CodeAnalysis.CSharp.Workspaces 5.0.0
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/dotnet/roslyn
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.CodeAnalysis.Features 5.0.0
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/dotnet/roslyn
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.CodeAnalysis.Workspaces.MSBuild 5.0.0
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/dotnet/roslyn
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.Extensions.Caching.Memory 10.0.2
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://dot.net/
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.Extensions.Hosting 10.0.2
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://dot.net/
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.Extensions.Options.DataAnnotations 10.0.2
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://dot.net/
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+Microsoft.SourceLink.GitHub 10.0.102
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://github.com/dotnet/dotnet
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
+ModelContextProtocol 0.6.0-preview.1
+License: MIT
+License URL: https://licenses.nuget.org/MIT
+Project URL: https://modelcontextprotocol.github.io/csharp-sdk
+Copyright: © Anthropic and Contributors.
+
+-------------------------------------------------------------
+Serilog.Extensions.Hosting 10.0.0
+License: Apache-2.0
+License URL: https://licenses.nuget.org/Apache-2.0
+Project URL: https://github.com/serilog/serilog-extensions-hosting
+
+-------------------------------------------------------------
+Serilog.Sinks.Console 6.1.1
+License: Apache-2.0
+License URL: https://licenses.nuget.org/Apache-2.0
+Project URL: https://github.com/serilog/serilog-sinks-console

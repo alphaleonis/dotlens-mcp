@@ -1,0 +1,10 @@
+# TrunkBased: main + short-lived feature branches
+workflow: TrunkBased/preview1
+
+# Keep AssemblyVersion and FileVersion identical
+assembly-versioning-scheme: MajorMinorPatch
+assembly-file-versioning-scheme: MajorMinorPatch
+
+# Starting version for the public release
+next-version: 1.0.0
+

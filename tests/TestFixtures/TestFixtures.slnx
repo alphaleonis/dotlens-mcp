@@ -1,0 +1,10 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="AnalyzerTestProject/AnalyzerTestProject.csproj" />
+  <Project Path="InheritanceTestProject/InheritanceTestProject.csproj" />
+  <Project Path="CoreTestProject/CoreTestProject.csproj" />
+</Solution>
