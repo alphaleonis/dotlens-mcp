@@ -281,7 +281,7 @@ Note: Required parameter validation is handled automatically by the MCP SDK.
 **If any DotLens tool returns an unexpected error or behaves incorrectly:**
 1. **Immediately stop** what you are doing
 2. **Tell the user** exactly what happened (tool name, input, error message or unexpected output)
-3. **Offer to create a nib** to track the issue: `nibs new "DotLens: <brief description>" -t bug --parent dotlens-aqnq -d -`, with the detailed error message and reproduction steps on stdin
+3. **Offer to create a nib** to track the issue: `nibs new "DotLens: <brief description>" -t bug --parent dotlens-t76f -d -`, with the detailed error message and reproduction steps on stdin
 4. Only then continue with your original task using alternative approaches if needed
 
 This is critical -- we are actively developing DotLens and every bug report helps improve it. Do not silently fall back to text-based tools when DotLens fails.
@@ -316,9 +316,9 @@ The `tests/TestFixtures/` directory contains C# projects used by integration tes
 
 Issues are tracked with `nibs` in `.nibs/`, which is a separate private git repository.
 
-When creating nibs, **assign them to milestone `dotlens-aqnq`** unless otherwise specified:
+When creating nibs, **assign them to milestone `dotlens-t76f` (v1.1.0)** unless otherwise specified:
 ```bash
-nibs new "Title" -t task --parent dotlens-aqnq
+nibs new "Title" -t task --parent dotlens-t76f
 ```
 
 **Starting work**: Always mark a nib as `in-progress` when you start working on it:
