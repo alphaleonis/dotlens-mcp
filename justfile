@@ -31,7 +31,6 @@ format:
 # Generate THIRD-PARTY-NOTICES.txt from NuGet dependencies
 notices:
     dotnet tool restore
-    dotnet dotnet-project-licenses -i {{project}} --unique --json --outfile .notices-tmp.json
     dotnet run build/generate-notices.cs
 
 # Build a Release NuGet package

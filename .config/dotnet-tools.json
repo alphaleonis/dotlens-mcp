@@ -2,10 +2,10 @@
   "version": 1,
   "isRoot": true,
   "tools": {
-    "dotnet-project-licenses": {
-      "version": "2.7.1",
+    "nuget-license": {
+      "version": "4.0.18",
       "commands": [
-        "dotnet-project-licenses"
+        "nuget-license"
       ],
       "rollForward": false
     }

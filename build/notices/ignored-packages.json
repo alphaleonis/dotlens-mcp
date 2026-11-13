@@ -1,0 +1,10 @@
+[
+  "GitVersion.MsBuild",
+  "Microsoft.Build.Tasks.Git",
+  "Microsoft.CodeAnalysis.Analyzers",
+  "Microsoft.SourceLink.Common",
+  "Microsoft.SourceLink.GitHub",
+  "System.Composition",
+  "System.Data.DataSetExtensions",
+  "System.IO.Hashing"
+]

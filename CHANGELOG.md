@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- `THIRD-PARTY-NOTICES.txt` lists every third-party component the package redistributes, including transitive dependencies and the assemblies bundled inside Roslyn's BuildHost, and includes the full MIT and Apache-2.0 license texts. The notices in 1.0.0 and 1.0.1 listed only direct dependencies, some at outdated versions.
+
 ## v1.0.1
 
 Initial public release of DotLens — an MCP server providing 54 AI-optimized tools for .NET/C# semantic code analysis, built on Roslyn.

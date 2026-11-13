@@ -59,3 +59,9 @@ jobs:
 
       - name: Check formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
+
+      - name: Check third-party notices are current
+        run: |
+          dotnet tool restore
+          dotnet run build/generate-notices.cs
+          git diff --exit-code THIRD-PARTY-NOTICES.txt
