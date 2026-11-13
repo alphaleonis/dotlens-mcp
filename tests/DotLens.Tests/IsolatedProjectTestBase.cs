@@ -54,12 +54,14 @@ public abstract class IsolatedProjectTestBase : IAsyncLifetime
 
    public virtual async ValueTask InitializeAsync()
    {
-      // Find the TestFixtures source directory
-      var sourceDir = FindTestFixturesDir();
+      var repoRoot = FindRepoRoot();
 
       // Create temp copy
       _tempDir = Path.Combine(Path.GetTempPath(), $"DotLensIsolatedTest_{Guid.NewGuid():N}");
-      CopyDirectory(sourceDir, _tempDir);
+      CopyDirectory(Path.Combine(repoRoot, "tests", "TestFixtures"), _tempDir);
+
+      // Outside the repo, MSBuild would otherwise build the copy with the newest installed SDK.
+      File.Copy(Path.Combine(repoRoot, "global.json"), Path.Combine(_tempDir, "global.json"));
 
       // Initialize workspace manager for temp project
       var options = Options.Create(new DotLensOptions());
@@ -260,22 +262,21 @@ public abstract class IsolatedProjectTestBase : IAsyncLifetime
       return node[pascalCaseName] ?? node[camelCaseName];
    }
 
-   // ===========================================
-   // Private helpers
-   // ===========================================
-
-   private static string FindTestFixturesDir()
+   protected static string FindRepoRoot()
    {
       var dir = Directory.GetCurrentDirectory();
       while (dir != null)
       {
-         var testFixturesPath = Path.Combine(dir, "tests", "TestFixtures");
-         if (Directory.Exists(testFixturesPath) && File.Exists(Path.Combine(testFixturesPath, "TestFixtures.slnx")))
-            return testFixturesPath;
+         if (File.Exists(Path.Combine(dir, "tests", "TestFixtures", "TestFixtures.slnx")))
+            return dir;
          dir = Directory.GetParent(dir)?.FullName;
       }
-      throw new InvalidOperationException("Could not find tests/TestFixtures directory");
+      throw new InvalidOperationException("Could not find the repository root containing tests/TestFixtures");
    }
+
+   // ===========================================
+   // Private helpers
+   // ===========================================
 
    private static void CopyDirectory(string source, string destination)
    {
