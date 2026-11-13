@@ -388,7 +388,7 @@ public class SymbolLookupServiceTests : TestFixtureTestBase
 
    // Note: SYMBOL_IN_METADATA path in FindSingleSourceSymbolAsync is currently unreachable
    // because FindByNameAsync only searches source types. When metadata symbol lookup is
-   // implemented (tracked in beans: dotlens-1h7n, dotlens-8c94), tests should be added here.
+   // implemented (tracked in nibs: dotlens-1h7n, dotlens-8c94), tests should be added here.
 
    // ===========================================
    // Nested type lookup tests (progressive resolution)

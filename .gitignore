@@ -12,8 +12,8 @@ artifacts/
 # Vestige/FastEmbed cache
 .fastembed_cache/
 
-# Beans (issue tracking in separate private repo)
-.beans/
+# Nibs (issue tracking in separate private repo)
+.nibs/
 *.user
 *.suo
 

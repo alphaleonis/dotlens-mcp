@@ -281,7 +281,7 @@ Note: Required parameter validation is handled automatically by the MCP SDK.
 **If any DotLens tool returns an unexpected error or behaves incorrectly:**
 1. **Immediately stop** what you are doing
 2. **Tell the user** exactly what happened (tool name, input, error message or unexpected output)
-3. **Offer to create a bean** to track the issue: `beans create "DotLens: <brief description>" -t bug -d "<detailed error message and reproduction steps>"`
+3. **Offer to create a nib** to track the issue: `nibs new "DotLens: <brief description>" -t bug --parent dotlens-aqnq -d -`, with the detailed error message and reproduction steps on stdin
 4. Only then continue with your original task using alternative approaches if needed
 
 This is critical -- we are actively developing DotLens and every bug report helps improve it. Do not silently fall back to text-based tools when DotLens fails.
@@ -312,22 +312,24 @@ The `tests/TestFixtures/` directory contains C# projects used by integration tes
 - **Add new classes/types in new files** rather than appending to existing files
 - If a test needs a specific type, create a new file for it (e.g., `AmbiguityTests.cs` instead of adding to `Classes.cs`)
 
-## Beans (Issue Tracking)
+## Nibs (Issue Tracking)
 
-When creating beans, **assign them to milestone `dotlens-aqnq`** unless otherwise specified:
+Issues are tracked with `nibs` in `.nibs/`, which is a separate private git repository.
+
+When creating nibs, **assign them to milestone `dotlens-aqnq`** unless otherwise specified:
 ```bash
-beans create "Title" -t task --parent dotlens-aqnq
+nibs new "Title" -t task --parent dotlens-aqnq
 ```
 
-**Starting work**: Always mark a bean as `in-progress` when you start working on it:
+**Starting work**: Always mark a nib as `in-progress` when you start working on it:
 ```bash
-beans update <bean-id> --status in-progress
+nibs set <nib-id> --status in-progress
 ```
 
-**Completing beans**: Do NOT mark a bean as completed without user approval. When you believe a task is done:
+**Completing nibs**: Do NOT close a nib without user approval. When you believe a task is done:
 1. State that you deem the work complete
-2. Ask the user if they want you to complete the bean and commit the changes
-3. Wait for explicit approval before marking complete
+2. Ask the user if they want you to close the nib and commit the changes
+3. Wait for explicit approval, then close it with a summary: `nibs close <nib-id> --summary -` (summary on stdin)
 
 ## Git Workflow
 
@@ -336,7 +338,7 @@ This project uses a topic branch workflow to ensure all commits to `feature/init
 ### Branch Structure
 
 - **`feature/initial`**: Main development branch. All commits here MUST build and pass tests.
-- **`work/<bean-id>-<description>`**: Topic branches for individual tasks (e.g., `work/dotlens-hte4-find-callers-review`)
+- **`work/<nib-id>-<description>`**: Topic branches for individual tasks (e.g., `work/dotlens-hte4-find-callers-review`)
 
 ## Important Notes
 
