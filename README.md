@@ -279,7 +279,7 @@ Contributions are welcome! Please open an issue or pull request on [GitHub](http
 ```bash
 # Development workflow
 dotnet build src/DotLens/DotLens.csproj
-dotnet test tests/DotLens.Tests/DotLens.Tests.csproj
+dotnet test --project tests/DotLens.Tests/DotLens.Tests.csproj
 ```
 
 ### Adding New Tools

@@ -16,7 +16,7 @@ DotLens is an MCP server providing a comprehensive suite of AI-optimized tools f
 
 ```bash
 dotnet build src/DotLens/DotLens.csproj
-dotnet test tests/DotLens.Tests/DotLens.Tests.csproj
+dotnet test --project tests/DotLens.Tests/DotLens.Tests.csproj
 ```
 
 ## Key Structure

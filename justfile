@@ -15,7 +15,7 @@ build:
 
 # Run all tests
 test:
-    dotnet test {{tests}}
+    dotnet test --project {{tests}}
 
 # Build and test
 check: build test
