@@ -181,7 +181,7 @@ public class GetComplexityMetricsTool
          new MethodComplexityResponse
          {
             Name = methodSymbol.Name,
-            ContainingType = methodSymbol.ContainingType?.Name,
+            ContainingType = methodSymbol.ContainingType is { } containingType ? RoslynHelpers.GetName(containingType) : null,
             Metrics = methodMetrics,
             Location = location
          },
@@ -221,7 +221,7 @@ public class GetComplexityMetricsTool
 
             // Get name from symbol, or fallback to extracting from syntax
             var name = symbol?.Name ?? GetMethodName(node);
-            var containingType = symbol?.ContainingType?.Name;
+            var containingType = symbol?.ContainingType is { } type ? RoslynHelpers.GetName(type) : null;
             var line = node.GetLineNumber();
 
             return new MethodMetrics

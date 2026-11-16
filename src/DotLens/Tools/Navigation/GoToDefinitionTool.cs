@@ -111,13 +111,14 @@ public class GoToDefinitionTool
       }
 
       // Build suggested next tools
+      var symbolName = RoslynHelpers.GetName(symbol);
       var suggestions = new List<string>
       {
-         $"find_references to see all usages of {symbol.Name}",
-         $"get_symbol_info for more details about {symbol.Name}"
+         $"find_references to see all usages of {symbolName}",
+         $"get_symbol_info for more details about {symbolName}"
       };
       if (symbol is INamedTypeSymbol)
-         suggestions.Add($"get_type_members for {symbol.Name}");
+         suggestions.Add($"get_type_members for {symbolName}");
       if ((symbol is IMethodSymbol or IPropertySymbol or IEventSymbol) && !includeSource)
          suggestions.Add($"get_method_source to see the implementation");
 

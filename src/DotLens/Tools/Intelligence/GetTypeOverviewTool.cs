@@ -140,7 +140,7 @@ public class GetTypeOverviewTool
       return ToolResult.Create(
          new TypeOverviewResponse
          {
-            Name = typeSymbol.Name,
+            Name = RoslynHelpers.GetName(typeSymbol),
             FullyQualifiedName = typeSymbol.ToDisplayString(),
             TypeKind = typeSymbol.TypeKind.ToString(),
             Accessibility = typeSymbol.DeclaredAccessibility.ToString(),

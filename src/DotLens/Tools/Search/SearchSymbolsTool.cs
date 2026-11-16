@@ -146,8 +146,8 @@ public class SearchSymbolsTool
       // Sort
       var sorted = sortBy switch
       {
-         SymbolSortBy.Name => allSymbols.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase),
-         SymbolSortBy.Kind => allSymbols.OrderBy(SymbolFilterHelper.GetKindSortOrder).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase),
+         SymbolSortBy.Name => allSymbols.OrderBy(RoslynHelpers.GetName, StringComparer.OrdinalIgnoreCase),
+         SymbolSortBy.Kind => allSymbols.OrderBy(SymbolFilterHelper.GetKindSortOrder).ThenBy(RoslynHelpers.GetName, StringComparer.OrdinalIgnoreCase),
          _ => allSymbols.AsEnumerable()
       };
 
@@ -193,7 +193,9 @@ public class SearchSymbolsTool
       [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
    {
       bool isGlobPattern = query.Contains('*') || query.Contains('?');
-      var queryMatcher = isGlobPattern ? new GlobMatcher(query) : null;
+      Func<string, bool> matchesQuery = isGlobPattern
+         ? new GlobMatcher(query).IsMatch
+         : name => name.Contains(query, StringComparison.OrdinalIgnoreCase);
       var namespaceMatcher = new GlobMatcher(namespaceFilter);
 
       // Filter projects if project parameter specified
@@ -209,14 +211,15 @@ public class SearchSymbolsTool
             continue;
 
          var symbols = compilation.GetSymbolsWithName(
-            name => queryMatcher != null
-               ? queryMatcher.IsMatch(name)
-               : name.Contains(query, StringComparison.OrdinalIgnoreCase),
+            SymbolFilterHelper.AdmitExtensionBlocks(matchesQuery),
             SymbolFilter.All,
             cancellationToken);
 
          foreach (var symbol in symbols)
          {
+            if (!matchesQuery(RoslynHelpers.GetName(symbol)))
+               continue;
+
             // Filter by kind
             if (kind.HasValue && !SymbolFilterHelper.MatchesKind(symbol, kind.Value))
                continue;

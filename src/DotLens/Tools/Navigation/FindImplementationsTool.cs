@@ -78,7 +78,7 @@ public class FindImplementationsTool
       var suggestions = new List<string>
       {
          "get_type_members for each implementation to see their members",
-         $"get_type_hierarchy for {typeSymbol.Name} to see full inheritance tree"
+         $"get_type_hierarchy for {RoslynHelpers.GetName(typeSymbol)} to see full inheritance tree"
       };
 
       if (totalImplementations > maxResults)

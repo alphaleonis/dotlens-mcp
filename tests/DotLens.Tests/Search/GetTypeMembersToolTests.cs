@@ -31,8 +31,8 @@ public class GetTypeMembersToolTests : TestFixtureTestBase
       AssertSuccess(result);
       var data = GetData(result);
       Assert.Contains("SampleClass", data.GetStringOrNull("typeName"));
-      // SampleClass has 23 members: 5 fields + 4 properties + 3 constructors + 8 methods + 3 property accessors
-      Assert.Equal(23, data.GetInt("totalMembers"));
+      // SampleClass has 27 members: 5 fields + 4 properties + 7 property accessors + 3 constructors + 8 methods
+      Assert.Equal(27, data.GetInt("totalMembers"));
    }
 
    [Fact]

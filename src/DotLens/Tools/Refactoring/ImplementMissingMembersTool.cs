@@ -57,7 +57,7 @@ public class ImplementMissingMembersTool
       {
          throw new ToolException(
             ErrorCodes.SymbolNotFound,
-            $"Could not find syntax reference for type '{typeSymbol.Name}'");
+            $"Could not find syntax reference for type '{RoslynHelpers.GetName(typeSymbol)}'");
       }
 
       var declarationSyntax = await syntaxReference.GetSyntaxAsync(cancellationToken);
@@ -86,12 +86,12 @@ public class ImplementMissingMembersTool
          {
             throw new ToolException(
                ErrorCodes.NotSupported,
-               $"Type '{typeSymbol.Name}' already implements all required members");
+               $"Type '{RoslynHelpers.GetName(typeSymbol)}' already implements all required members");
          }
 
          throw new ToolException(
             ErrorCodes.AnalysisFailed,
-            $"No 'Implement interface' or 'Implement abstract' action available for '{typeSymbol.Name}'",
+            $"No 'Implement interface' or 'Implement abstract' action available for '{RoslynHelpers.GetName(typeSymbol)}'",
             "Ensure the cursor is on the type declaration, not inside a member");
       }
 

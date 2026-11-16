@@ -90,7 +90,7 @@ public class AnalyzeChangeImpactTool
       return ToolResult.Create(
          new ChangeImpactResponse
          {
-            SymbolName = symbol.Name,
+            SymbolName = RoslynHelpers.GetName(symbol),
             SymbolKind = symbol.ToSymbolKindDto(),
             ChangeType = changeType,
             NewValue = newValue,

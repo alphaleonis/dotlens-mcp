@@ -24,7 +24,7 @@ public class GetTypeMembersBatchTool
       [Description("Array of type names to look up")] List<string> typeNames,
       [Description("Filter by member kind")]
       MemberKindFilter? memberKind = null,
-      [Description("Include inherited members")]
+      [Description("Also list members inherited from base classes other than object, static ones included. Private members, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,
       [Description("Max members per type")]
       [PositiveInteger]
@@ -50,9 +50,7 @@ public class GetTypeMembersBatchTool
          }
          var typeSymbol = lookupResult.Type;
 
-         var members = includeInherited
-            ? typeSymbol.GetMembers().Concat(IntelligenceHelpers.GetInheritedMembers(typeSymbol))
-            : typeSymbol.GetMembers();
+         var members = RoslynHelpers.GetTypeMembers(typeSymbol, includeInherited);
 
          if (memberKind.HasValue)
          {
@@ -67,7 +65,6 @@ public class GetTypeMembersBatchTool
          }
 
          var memberList = members
-            .Where(m => !m.IsImplicitlyDeclared)
             .Take(maxResultsPerType)
             .Select(m => RoslynHelpers.FormatMember(m, verbosity, _workspaceManager.SolutionPath, _workspaceManager.UseAbsolutePaths))
             .ToList();

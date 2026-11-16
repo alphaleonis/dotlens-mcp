@@ -72,7 +72,7 @@ public class FindOverridesTool
          var kind = symbol.ToSymbolKindDto().ToString().ToLowerInvariant();
          throw new ToolException(
             ErrorCodes.InvalidParameter,
-            $"The {kind} '{symbol.Name}' is not virtual, abstract, or an override",
+            $"The {kind} '{RoslynHelpers.GetName(symbol)}' is not virtual, abstract, or an override",
             $"Only virtual, abstract, or override members can have overrides.");
       }
 

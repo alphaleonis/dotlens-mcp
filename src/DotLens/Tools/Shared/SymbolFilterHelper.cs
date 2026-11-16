@@ -82,6 +82,17 @@ public static class SymbolFilterHelper
    }
 
    /// <summary>
+   /// Returns a name predicate for <see cref="Compilation.GetSymbolsWithName(Func{string, bool}, SymbolFilter, CancellationToken)"/>
+   /// that also admits the empty name Roslyn gives every extension block.
+   /// </summary>
+   /// <remarks>
+   /// Filter the symbols it finds with <paramref name="matches"/> on <see cref="RoslynHelpers.GetName"/>, which names a
+   /// block by its header.
+   /// </remarks>
+   public static Func<string, bool> AdmitExtensionBlocks(Func<string, bool> matches) =>
+      name => name.Length == 0 || matches(name);
+
+   /// <summary>
    /// Returns sort order for symbol kinds (types first, then members).
    /// </summary>
    public static int GetKindSortOrder(ISymbol symbol) => symbol switch
@@ -91,11 +102,12 @@ public static class SymbolFilterHelper
       INamedTypeSymbol { TypeKind: TypeKind.Struct } => 2,
       INamedTypeSymbol { TypeKind: TypeKind.Enum } => 3,
       INamedTypeSymbol { TypeKind: TypeKind.Delegate } => 4,
-      IMethodSymbol { MethodKind: MethodKind.Constructor } => 5,
-      IMethodSymbol => 6,
-      IPropertySymbol => 7,
-      IFieldSymbol => 8,
-      IEventSymbol => 9,
+      INamedTypeSymbol { TypeKind: TypeKind.Extension } => 5,
+      IMethodSymbol { MethodKind: MethodKind.Constructor } => 6,
+      IMethodSymbol => 7,
+      IPropertySymbol => 8,
+      IFieldSymbol => 9,
+      IEventSymbol => 10,
       _ => 99
    };
 

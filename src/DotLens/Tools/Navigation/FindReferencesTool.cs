@@ -107,13 +107,14 @@ public class FindReferencesTool
       }
 
       // Build context-aware suggestions
+      var symbolName = RoslynHelpers.GetName(symbol);
       var suggestions = new List<string>
       {
-         $"get_symbol_info to get details about {symbol.Name}",
-         $"find_callers to see methods that call {symbol.Name}"
+         $"get_symbol_info to get details about {symbolName}",
+         $"find_callers to see methods that call {symbolName}"
       };
       if (symbol is INamedTypeSymbol)
-         suggestions.Add($"get_type_members for {symbol.Name}");
+         suggestions.Add($"get_type_members for {symbolName}");
       if (totalReferences > maxResults)
          suggestions.Add($"find_references with higher maxResults to see all {totalReferences} references");
 

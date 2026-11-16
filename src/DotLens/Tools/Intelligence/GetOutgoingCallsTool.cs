@@ -82,14 +82,15 @@ public class GetOutgoingCallsTool
          $"find_callers to see who calls {methodSymbol.Name}",
          $"get_method_source to see the full implementation"
       };
-      if (methodSymbol.ContainingType != null)
-         suggestions.Add($"get_type_members for {methodSymbol.ContainingType.Name}");
+      var containingType = methodSymbol.ContainingType is { } type ? RoslynHelpers.GetName(type) : null;
+      if (containingType != null)
+         suggestions.Add($"get_type_members for {containingType}");
 
       return ToolResult.Create(
          new OutgoingCallsResponse
          {
             MethodName = methodSymbol.Name,
-            ContainingType = methodSymbol.ContainingType?.Name,
+            ContainingType = containingType,
             OutgoingCallCount = totalCount,
             OutgoingCalls = verbosity == ToolResultVerbosity.Summary ? null : distinctCalls
          },

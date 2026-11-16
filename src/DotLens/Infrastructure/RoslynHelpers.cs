@@ -397,6 +397,118 @@ public static class RoslynHelpers
    }
 
    /// <summary>
+   /// Returns the members of a type that its source declares, each once, and with <paramref name="includeInherited"/>
+   /// also the members it inherits from its base classes other than <see cref="object"/>.
+   /// </summary>
+   /// <remarks>
+   /// An inherited member is left out when it is private, a constructor or destructor, or overridden or hidden by a
+   /// member of a more derived class. An accessor is left out with its property, indexer or event. The declared members
+   /// come first, then each base class's members in turn.
+   /// </remarks>
+   public static IEnumerable<ISymbol> GetTypeMembers(INamedTypeSymbol type, bool includeInherited)
+   {
+      var members = type.GetMembers().Where(m => !m.IsImplicitlyDeclared).ToList();
+      if (!includeInherited)
+         return members;
+
+      // Compiler-generated members hide too, but a private member hides nothing outside its class.
+      var hidingMembers = type.GetMembers().Where(m => m.DeclaredAccessibility != Microsoft.CodeAnalysis.Accessibility.Private).ToList();
+      for (var baseType = type.BaseType;
+           baseType is not null && baseType.SpecialType != SpecialType.System_Object;
+           baseType = baseType.BaseType)
+      {
+         var inherited = baseType.GetMembers()
+            .Where(m => m.DeclaredAccessibility != Microsoft.CodeAnalysis.Accessibility.Private
+               && m is not IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor })
+            .ToList();
+         var hidden = inherited
+            .Where(m => hidingMembers.Any(derived => Hides(derived, m)))
+            .ToHashSet(SymbolEqualityComparer.Default);
+
+         members.AddRange(inherited.Where(m =>
+            !m.IsImplicitlyDeclared
+            && !hidden.Contains(m is IMethodSymbol { AssociatedSymbol: { } owner } ? owner : m)));
+         hidingMembers.AddRange(inherited);
+      }
+
+      return members;
+   }
+
+   /// <summary>
+   /// Returns whether <paramref name="member"/> overrides or hides <paramref name="baseMember"/> by the C# rules: a
+   /// method hides base methods with the same signature and every other base member with its name, an indexer hides
+   /// base indexers with the same parameters, and any other member hides every base member with its name.
+   /// </summary>
+   private static bool Hides(ISymbol member, ISymbol baseMember)
+   {
+      if (member.Name != baseMember.Name)
+         return false;
+
+      return (member, baseMember) switch
+      {
+         (IMethodSymbol method, IMethodSymbol baseMethod) => HaveSameSignature(method, baseMethod),
+         (IPropertySymbol { IsIndexer: true } indexer, IPropertySymbol { IsIndexer: true } baseIndexer) =>
+            HaveSameParameters(indexer.Parameters, baseIndexer.Parameters),
+         (INamedTypeSymbol nested, INamedTypeSymbol baseNested) => nested.Arity == baseNested.Arity,
+         _ => true
+      };
+   }
+
+   private static bool HaveSameSignature(IMethodSymbol method, IMethodSymbol baseMethod)
+   {
+      if (method.Arity != baseMethod.Arity)
+         return false;
+
+      // Substitute the method's own type parameters so M<T>(T) and M<U>(U) compare equal.
+      var comparable = method.Arity > 0 ? baseMethod.Construct([.. method.TypeParameters]) : baseMethod;
+      return HaveSameParameters(method.Parameters, comparable.Parameters);
+   }
+
+   private static bool HaveSameParameters(
+      System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameters,
+      System.Collections.Immutable.ImmutableArray<IParameterSymbol> baseParameters) =>
+      parameters.Length == baseParameters.Length
+      && parameters.Zip(baseParameters).All(pair =>
+         pair.First.RefKind == pair.Second.RefKind && AreIdentical(pair.First.Type, pair.Second.Type));
+
+   /// <summary>
+   /// Returns whether two types have an identity conversion, so a signature cannot tell them apart: <c>dynamic</c>
+   /// matches <c>object</c>, tuples match whatever their element names, and nullable annotations are ignored.
+   /// </summary>
+   private static bool AreIdentical(ITypeSymbol type, ITypeSymbol other)
+   {
+      if (IsObjectOrDynamic(type) && IsObjectOrDynamic(other))
+         return true;
+
+      return (type, other) switch
+      {
+         (IArrayTypeSymbol array, IArrayTypeSymbol otherArray) =>
+            array.Rank == otherArray.Rank && AreIdentical(array.ElementType, otherArray.ElementType),
+         (IPointerTypeSymbol pointer, IPointerTypeSymbol otherPointer) =>
+            AreIdentical(pointer.PointedAtType, otherPointer.PointedAtType),
+         (INamedTypeSymbol named, INamedTypeSymbol otherNamed) => AreIdentical(named, otherNamed),
+         _ => SymbolEqualityComparer.Default.Equals(type, other)
+      };
+   }
+
+   private static bool AreIdentical(INamedTypeSymbol type, INamedTypeSymbol other)
+   {
+      type = type.TupleUnderlyingType ?? type;
+      other = other.TupleUnderlyingType ?? other;
+
+      return SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, other.OriginalDefinition)
+         && type.TypeArguments.Zip(other.TypeArguments).All(pair => AreIdentical(pair.First, pair.Second))
+         && (type.ContainingType, other.ContainingType) switch
+         {
+            ({ } container, { } otherContainer) => AreIdentical(container, otherContainer),
+            _ => true
+         };
+   }
+
+   private static bool IsObjectOrDynamic(ITypeSymbol type) =>
+      type.TypeKind == TypeKind.Dynamic || type.SpecialType == SpecialType.System_Object;
+
+   /// <summary>
    /// Gets a human-readable string for a member's kind.
    /// </summary>
    public static string GetMemberKindString(ISymbol member)
@@ -408,6 +520,7 @@ public static class RoslynHelpers
          IPropertySymbol => "Property",
          IFieldSymbol => "Field",
          IEventSymbol => "Event",
+         INamedTypeSymbol { IsExtension: true } => "Extension",
          _ => member.Kind.ToString()
       };
    }
@@ -424,7 +537,7 @@ public static class RoslynHelpers
       {
          return new MemberInfo
          {
-            Name = member.Name,
+            Name = GetName(member),
             Kind = kind
          };
       }
@@ -436,7 +549,7 @@ public static class RoslynHelpers
       // Build base compact info
       var info = new MemberInfo
       {
-         Name = member.Name,
+         Name = GetName(member),
          Kind = kind,
          Accessibility = member.DeclaredAccessibility.ToString(),
          IsStatic = member.IsStatic,
@@ -906,9 +1019,16 @@ public static class RoslynHelpers
       || string.Equals(GetFullyQualifiedExtensionBlockName(extension), name, StringComparison.Ordinal);
 
    /// <summary>
+   /// Returns the name that tools show and search for a symbol: the header of an extension block, and
+   /// <see cref="ISymbol.Name"/> for any other symbol.
+   /// </summary>
+   public static string GetName(ISymbol symbol) =>
+      symbol is INamedTypeSymbol { IsExtension: true } extension ? GetExtensionBlockName(extension) : symbol.Name;
+
+   /// <summary>
    /// Returns the header of an extension block without the receiver's name, such as <c>extension(scoped ref Meter)</c>.
    /// </summary>
-   private static string GetExtensionBlockName(INamedTypeSymbol extension) =>
+   public static string GetExtensionBlockName(INamedTypeSymbol extension) =>
       GetExtensionBlockName(extension, SymbolDisplayFormat.MinimallyQualifiedFormat);
 
    /// <summary>

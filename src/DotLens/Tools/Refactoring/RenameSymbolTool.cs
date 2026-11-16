@@ -45,6 +45,13 @@ public class RenameSymbolTool
       var lookupResult = await _symbolLookup.FindSingleSourceSymbolAsync<ISymbol>(target, cancellationToken);
       var symbol = lookupResult.Symbol;
 
+      if (symbol is INamedTypeSymbol { IsExtension: true } extension)
+      {
+         throw new ToolException(
+            ErrorCodes.NotSupported,
+            $"{RoslynHelpers.GetExtensionBlockName(extension)} is an extension block, which has no name to rename. Rename its receiver parameter or its members instead.");
+      }
+
       // Validate new name
       if (string.IsNullOrWhiteSpace(newName))
       {

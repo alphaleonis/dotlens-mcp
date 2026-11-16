@@ -127,7 +127,7 @@ public class FindCallersTool
       // Build context-aware suggestions
       var suggestions = new List<string>
       {
-         $"get_symbol_info for details about {symbol.Name}",
+         $"get_symbol_info for details about {RoslynHelpers.GetName(symbol)}",
          "find_references for all usages (not just calls)",
          "analyze_change_impact to see what would break"
       };

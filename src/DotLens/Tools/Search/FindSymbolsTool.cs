@@ -154,8 +154,8 @@ public class FindSymbolsTool
 
       var sorted = sortBy switch
       {
-         SymbolSortBy.Name => allSymbols.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase),
-         SymbolSortBy.Kind => allSymbols.OrderBy(SymbolFilterHelper.GetKindSortOrder).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase),
+         SymbolSortBy.Name => allSymbols.OrderBy(RoslynHelpers.GetName, StringComparer.OrdinalIgnoreCase),
+         SymbolSortBy.Kind => allSymbols.OrderBy(SymbolFilterHelper.GetKindSortOrder).ThenBy(RoslynHelpers.GetName, StringComparer.OrdinalIgnoreCase),
          _ => allSymbols.AsEnumerable()
       };
 
@@ -210,13 +210,17 @@ public class FindSymbolsTool
 
          // Use efficient name predicate when name filter is provided
          Func<string, bool> namePredicate = nameMatcher != null
-            ? nameMatcher.IsMatch
+            ? SymbolFilterHelper.AdmitExtensionBlocks(nameMatcher.IsMatch)
             : _ => true;
 
          var symbols = compilation.GetSymbolsWithName(namePredicate, SymbolFilter.All, cancellationToken);
 
          foreach (var symbol in symbols)
          {
+            // A type's constructors match by the type's name.
+            if (nameMatcher != null && !nameMatcher.IsMatch(RoslynHelpers.GetName(symbol)))
+               continue;
+
             // For types, also enumerate constructors (they aren't returned by GetSymbolsWithName)
             if (needsConstructors && symbol is INamedTypeSymbol namedType)
             {

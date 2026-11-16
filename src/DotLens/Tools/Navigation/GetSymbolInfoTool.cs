@@ -39,20 +39,21 @@ public class GetSymbolInfoTool
          _workspace.UseAbsolutePaths);
 
       // Build context-aware suggestions
+      var symbolName = RoslynHelpers.GetName(symbol);
       var suggestions = new List<string>
       {
-         $"find_references to see all usages of {symbol.Name}"
+         $"find_references to see all usages of {symbolName}"
       };
 
       if (symbol is INamedTypeSymbol)
       {
-         suggestions.Add($"get_type_members for {symbol.Name} to see members");
+         suggestions.Add($"get_type_members for {symbolName} to see members");
          suggestions.Add($"get_type_hierarchy to see inheritance chain");
       }
       else if (symbol is IMethodSymbol or IPropertySymbol or IEventSymbol)
       {
-         suggestions.Add($"find_callers to see methods that call {symbol.Name}");
-         suggestions.Add($"find_base_member to see what {symbol.Name} overrides/implements");
+         suggestions.Add($"find_callers to see methods that call {symbolName}");
+         suggestions.Add($"find_base_member to see what {symbolName} overrides/implements");
       }
 
       return ToolResult.Create(response, suggestedNextTools: suggestions.ToArray());

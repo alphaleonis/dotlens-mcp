@@ -128,7 +128,7 @@ public class GetTypeHierarchyTool
       // Build context-aware suggestions
       var suggestions = new List<string>
       {
-         $"get_type_members for {typeSymbol.Name} to see all members"
+         $"get_type_members for {RoslynHelpers.GetName(typeSymbol)} to see all members"
       };
 
       if (typeSymbol.TypeKind == TypeKind.Interface || interfaces.Count > 0)

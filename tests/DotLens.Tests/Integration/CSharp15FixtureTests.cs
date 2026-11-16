@@ -3,6 +3,7 @@ using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Analysis;
 using DotLens.Tools.Intelligence;
 using DotLens.Tools.Navigation;
+using DotLens.Tools.Refactoring;
 using DotLens.Tools.Search;
 using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
@@ -35,7 +36,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -1161,6 +1162,370 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(0, result.Data.TotalReferences);
       Assert.NotNull(result.Data.References);
       Assert.Empty(result.Data.References);
+   }
+
+   [Fact]
+   public async Task TypeMembers_ExtensionBlockName_ListsBlockByNameAndKind()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "GridExtensions" }, cancellationToken: CT);
+
+      Assert.Equal(
+         [new MemberInfo { Name = "extension(Grid)", Kind = "Extension", Accessibility = "Public", IsStatic = false, Line = 10 }],
+         result.Data.Members);
+      Assert.Equal(new Dictionary<string, int> { ["Extension"] = 1 }, result.Data.MemberCounts);
+      Assert.Equal(1, result.Data.TotalMembers);
+   }
+
+   [Fact]
+   public async Task TypeMembers_ExtensionBlockName_ListsEachBlock()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetTypeMembersAsync(
+         new LookupByName { Name = "MeterExtensions" }, verbosity: ToolResultVerbosity.Summary, cancellationToken: CT);
+
+      Assert.Equal(
+         RefReceiverExtensionBlocks.Select(b => new MemberInfo { Name = b.Name, Kind = "Extension" }),
+         result.Data.Members);
+      Assert.Equal(7, result.Data.TotalMembers);
+   }
+
+   [Fact]
+   public async Task TypeMembers_ExtensionBlockName_ListsBlocksWithTheSameHeader()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+
+      var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "SpoolExtensions" }, cancellationToken: CT);
+      var batchResult = await batch.GetTypeMembersBatchAsync(["SpoolExtensions"], cancellationToken: CT);
+
+      (string, string, int?)[] expected = [("extension(Tape)", "Extension", 15), ("extension(Reel)", "Extension", 24), ("extension(Tape)", "Extension", 33)];
+      Assert.Equal(expected, result.Data.Members.Select(m => (m.Name, m.Kind, m.Line)));
+      Assert.Equal(3, result.Data.TotalMembers);
+      Assert.Equal(expected, Assert.Single(batchResult.Data.Results).Members.Select(m => (m.Name, m.Kind, m.Line)));
+   }
+
+   [Fact]
+   public async Task TypeMembers_Overloads_ListsEachOverload()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+
+      var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "Box" }, cancellationToken: CT);
+      var batchResult = await batch.GetTypeMembersBatchAsync(["Box"], cancellationToken: CT);
+
+      (string, string?)[] expected = [("Get", "T Box<T>.Get()"), ("Get", "T Box<T>.Get(int copies)")];
+      Assert.Equal(expected, result.Data.Members.Where(m => m.Kind == "Method").Select(m => (m.Name, m.Signature)));
+      Assert.Equal(expected, Assert.Single(batchResult.Data.Results).Members.Where(m => m.Kind == "Method").Select(m => (m.Name, m.Signature)));
+   }
+
+   /// <summary>
+   /// Rhombus overrides or hides <c>Area</c>, <c>Scale(int)</c>, <c>Sides</c> and <c>Pick&lt;T&gt;(T)</c>, so Figure's
+   /// other two overloads and its static method come through. Its private and constructor members never do.
+   /// </summary>
+   [Fact]
+   public async Task TypeMembers_IncludeInherited_OmitsOverriddenAndHiddenBaseMembers()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+
+      var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "Rhombus" }, includeInherited: true, cancellationToken: CT);
+      var batchResult = await batch.GetTypeMembersBatchAsync(["Rhombus"], includeInherited: true, cancellationToken: CT);
+
+      (string, string?, int?)[] expected =
+      [
+         ("Area", "double Rhombus.Area()", 24),
+         ("Scale", "double Rhombus.Scale(int factor)", 26),
+         ("Sides", null, 28),
+         ("Pick", "U Rhombus.Pick<U>(U value)", 30),
+         ("Scale", "double Figure.Scale(double factor)", 9),
+         ("Unit", "Figure Figure.Unit()", 13),
+         ("Pick", "T Figure.Pick<T>(T value, int count)", 17),
+      ];
+      Assert.Equal(expected, result.Data.Members.Select(m => (m.Name, m.Signature, m.Line)));
+      Assert.Equal(7, result.Data.TotalMembers);
+      Assert.Equal(expected, Assert.Single(batchResult.Data.Results).Members.Select(m => (m.Name, m.Signature, m.Line)));
+   }
+
+   /// <summary>
+   /// Barometer hides Gauge's members in every way that does or does not count as hiding: a different ref kind, an
+   /// accessor-less property, indexer or method over a property with accessors, and types that differ only by
+   /// <c>dynamic</c> or tuple element names.
+   /// </summary>
+   [Fact]
+   public async Task TypeMembers_IncludeInherited_HidesByExactSignatureWithAccessors()
+   {
+      var members = await InheritedMembersOfAsync("Barometer");
+
+      Assert.Equal(
+         [
+            ("CSharp15TestProject.Barometer", "Turn", "Method", 66),
+            ("CSharp15TestProject.Barometer", "Push", "Method", 68),
+            ("CSharp15TestProject.Barometer", "Level", "Property", 70),
+            ("CSharp15TestProject.Barometer", "get_Level", "Method", 70),
+            ("CSharp15TestProject.Barometer", "this[]", "Property", 72),
+            ("CSharp15TestProject.Barometer", "get_Item", "Method", 72),
+            ("CSharp15TestProject.Barometer", "Mode", "Method", 74),
+            ("CSharp15TestProject.Barometer", "Store", "Method", 76),
+            ("CSharp15TestProject.Barometer", "Pair", "Method", 78),
+            ("CSharp15TestProject.Barometer", "Many", "Method", 80),
+            ("CSharp15TestProject.Gauge", "Max", "Field", 35),
+            ("CSharp15TestProject.Gauge", "Count", "Field", 37),
+            ("CSharp15TestProject.Gauge", "Reset", "Method", 39),
+            ("CSharp15TestProject.Gauge", "Dial", "NamedType", 41),
+            ("CSharp15TestProject.Gauge", "Tools", "NamedType", 43),
+            ("CSharp15TestProject.Gauge", "Turn", "Method", 45),
+            ("CSharp15TestProject.Gauge", "Push", "Method", 47),
+            ("CSharp15TestProject.Gauge", "Shift", "Method", 61),
+         ],
+         members);
+   }
+
+   [Fact]
+   public async Task TypeMembers_IncludeInherited_StaticMemberOfIntermediateBaseHides()
+   {
+      var members = await InheritedMembersOfAsync("Bottom");
+
+      Assert.Equal([("CSharp15TestProject.Middle", "Shift", "Method", 85)], members.Where(m => m.Name == "Shift"));
+   }
+
+   [Fact]
+   public async Task TypeMembers_IncludeInherited_CompilerGeneratedOverrideHides()
+   {
+      var members = await InheritedMembersOfAsync("VipTicket");
+
+      Assert.DoesNotContain(members, m => m.Name == "ToString");
+   }
+
+   [Fact]
+   public async Task TypeMembers_IncludeInherited_OverriddenEventHidesItsAccessors()
+   {
+      var members = await InheritedMembersOfAsync("Siren");
+
+      Assert.Equal(
+         [("CSharp15TestProject.Siren", "Rang", "Event", 104), ("CSharp15TestProject.Siren", "Ring", "Method", 106)],
+         members);
+   }
+
+   private async Task<List<(string? ContainingType, string Name, string Kind, int? Line)>> InheritedMembersOfAsync(string typeName)
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+
+      var result = await tool.GetTypeMembersAsync(
+         new LookupByName { Name = typeName }, includeInherited: true, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+      var batchResult = await batch.GetTypeMembersBatchAsync(
+         [typeName], includeInherited: true, maxResultsPerType: 500, verbosity: ToolResultVerbosity.Full, cancellationToken: CT);
+
+      var members = result.Data.Members.Select(m => (m.ContainingType, m.Name, m.Kind, m.Line)).ToList();
+      Assert.Equal(members, Assert.Single(batchResult.Data.Results).Members.Select(m => (m.ContainingType, m.Name, m.Kind, m.Line)));
+      Assert.Equal(members.Count, result.Data.TotalMembers);
+      return members;
+   }
+
+   [Fact]
+   public async Task TypeMembersBatch_ExtensionBlockName_ListsBlockByNameAndKind()
+   {
+      var tool = new GetTypeMembersBatchTool(_fixture.Workspace);
+
+      var result = await tool.GetTypeMembersBatchAsync(["GridExtensions"], cancellationToken: CT);
+
+      var type = Assert.Single(result.Data.Results);
+      Assert.Equal(
+         [new MemberInfo { Name = "extension(Grid)", Kind = "Extension", Accessibility = "Public", IsStatic = false, Line = 10 }],
+         type.Members);
+      Assert.Empty(result.Data.Errors);
+   }
+
+   [Fact]
+   public async Task TypeOverview_ExtensionBlockName_HasBlockName()
+   {
+      var tool = new GetTypeOverviewTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetTypeOverviewAsync(GridExtensionBlockPosition, cancellationToken: CT);
+
+      Assert.Equal("extension(Grid)", result.Data.Name);
+      Assert.Equal("CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)", result.Data.FullyQualifiedName);
+      Assert.Equal("Extension", result.Data.TypeKind);
+      Assert.Equal(new TypeLocationInfo { FilePath = "ExtensionIndexer.cs", Line = 10 }, result.Data.Location);
+   }
+
+   [Fact]
+   public async Task ChangeImpact_ExtensionBlockName_HasBlockNameAndExtensionKind()
+   {
+      var tool = new AnalyzeChangeImpactTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.AnalyzeChangeImpactAsync(GridExtensionBlockPosition, ChangeType.Delete, cancellationToken: CT);
+
+      Assert.Equal("extension(Grid)", result.Data.SymbolName);
+      Assert.Equal(SymbolKindDto.Extension, result.Data.SymbolKind);
+      Assert.Equal(0, result.Data.ReferenceCount);
+      Assert.True(result.Data.IsSafe);
+   }
+
+   [Fact]
+   public async Task ChangeImpact_ExtensionBlockName_RenameIsNotSafe()
+   {
+      var tool = new AnalyzeChangeImpactTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.AnalyzeChangeImpactAsync(GridExtensionBlockPosition, ChangeType.Rename, "Other", cancellationToken: CT);
+
+      Assert.Equal("extension(Grid)", result.Data.SymbolName);
+      Assert.False(result.Data.IsSafe);
+      Assert.Equal("An extension block has no name to rename", result.Data.BreakingChangeReason);
+      Assert.Equal(["Rename the block's receiver parameter or its members instead"], result.Data.Suggestions);
+   }
+
+   [Fact]
+   public async Task RenameSymbol_ExtensionBlockName_Refuses()
+   {
+      // The refusal comes before any change, and preview never writes, so the shared fixture stays untouched.
+      var workspace = _fixture.Workspace as IWorkspace ?? throw new InvalidOperationException("The fixture workspace is writable");
+      var tool = new RenameSymbolTool(workspace, new SymbolLookupService(workspace));
+
+      var error = await Assert.ThrowsAsync<ToolException>(
+         () => tool.RenameSymbolAsync(GridExtensionBlockPosition, "Other", preview: true, cancellationToken: CT));
+
+      Assert.Equal(ErrorCodes.NotSupported, error.Code);
+      Assert.Equal(
+         "extension(Grid) is an extension block, which has no name to rename. Rename its receiver parameter or its members instead.",
+         error.Message);
+   }
+
+   [Theory]
+   [InlineData("extension*")]
+   [InlineData("*)")]
+   public async Task SearchSymbols_ExtensionBlockName_QueryMatchesBlockName(string query)
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync(query, maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllExtensionBlocks, result.Data.Items);
+   }
+
+   [Theory]
+   [InlineData("extension(ref Meter)", "extension(ref Meter)")]
+   [InlineData("extension(Tape)", "extension(Tape)", "extension(Tape)")]
+   [InlineData("extension<T>(ref T)", "extension<T>(ref T)")]
+   public async Task SearchSymbols_ExtensionBlockName_ExactQueryFindsBlock(string query, params string[] expected)
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync(query, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(expected.Select(name => (typeof(ExtensionSymbolResponse), name)), result.Data.Items.Select(s => (s.GetType(), s.Name)));
+   }
+
+   [Fact]
+   public async Task SearchSymbols_ExtensionBlockName_SortByNameUsesBlockName()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("e", sortBy: SymbolSortBy.Name, maxResults: 500, cancellationToken: CT);
+
+      var names = result.Data.Items.Select(s => s.Name).ToList();
+      Assert.NotEmpty(names);
+      Assert.Equal(names.Order(StringComparer.OrdinalIgnoreCase), names);
+      Assert.Equal(AllExtensionBlocks.Length, names.Count(n => n.StartsWith("extension", StringComparison.Ordinal)));
+   }
+
+   [Fact]
+   public async Task SearchSymbols_ExtensionBlockName_SortByKindPlacesBlocksAfterClasses()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("extension", sortBy: SymbolSortBy.Kind, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "BoardExtensions"),
+            (typeof(ClassSymbolResponse), "GridExtensions"),
+            (typeof(ClassSymbolResponse), "MeterExtensions"),
+            (typeof(ClassSymbolResponse), "SpoolExtensions"),
+            (typeof(ClassSymbolResponse), "TextExtensions"),
+            .. AllExtensionBlocks.Select(b => (typeof(ExtensionSymbolResponse), b.Name)).OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase),
+         ],
+         result.Data.Items.Select(s => (s.GetType(), s.Name)));
+   }
+
+   [Theory]
+   [InlineData("extension*", 15)]
+   [InlineData("extension(ref Meter)", 1)]
+   [InlineData("Extension(Grid)", 1)]
+   public async Task FindSymbols_ExtensionBlockName_NameMatchesBlockName(string name, int expectedCount)
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.FindSymbolsAsync(name, maxResults: 500, cancellationToken: CT);
+
+      var expected = AllExtensionBlocks.Where(b => new GlobMatcher(name).IsMatch(b.Name)).ToList();
+      Assert.Equal(expectedCount, expected.Count);
+      Assert.Equal(expected, result.Data.Items);
+   }
+
+   [Fact]
+   public async Task SymbolInfo_ExtensionBlockName_SuggestionsNameBlock()
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(GridExtensionBlockPosition, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            "find_references to see all usages of extension(Grid)",
+            "get_type_members for extension(Grid) to see members",
+            "get_type_hierarchy to see inheritance chain",
+         ],
+         result.Metadata?.SuggestedNextTools ?? throw new InvalidOperationException("The result lists suggested tools"));
+   }
+
+   [Fact]
+   public async Task ComplexityMetrics_ExtensionBlockName_IsContainingTypeOfBlockMembers()
+   {
+      var tool = new GetComplexityMetricsTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetComplexityMetricsAsync(
+         new ComplexityTargetFile { FilePath = _fixture.GetPath("ExtensionMembers.cs") }, cancellationToken: CT);
+
+      var file = Assert.IsType<FileComplexityResponse>(result.Data);
+      var methods = file.Methods ?? throw new InvalidOperationException("Compact verbosity lists methods");
+      Assert.Equal(
+         [
+            ("Whisper", "extension(string)"),
+            ("Blank", "extension(string)"),
+            ("Doubled", "extension(int)"),
+            ("Quiet", "TextUsage"),
+         ],
+         methods.Select(m => (m.Name, m.ContainingType)));
+   }
+
+   [Fact]
+   public async Task ComplexityMetrics_ExtensionBlockName_IsContainingTypeOfMethod()
+   {
+      var tool = new GetComplexityMetricsTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetComplexityMetricsAsync(
+         new ComplexityTargetMethod { Method = new LookupByName { Name = "TextExtensions.extension(string).Whisper" } }, cancellationToken: CT);
+
+      var method = Assert.IsType<MethodComplexityResponse>(result.Data);
+      Assert.Equal(("Whisper", "extension(string)"), (method.Name, method.ContainingType));
+   }
+
+   [Fact]
+   public async Task OutgoingCalls_ExtensionBlockName_IsContainingTypeOfMethod()
+   {
+      var tool = new GetOutgoingCallsTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetOutgoingCallsAsync(new LookupByName { Name = "TextExtensions.extension(string).Whisper" }, cancellationToken: CT);
+
+      Assert.Equal(("Whisper", "extension(string)"), (result.Data.MethodName, result.Data.ContainingType));
+      Assert.Equal(
+         ["find_callers to see who calls Whisper", "get_method_source to see the full implementation", "get_type_members for extension(string)"],
+         result.Metadata?.SuggestedNextTools ?? throw new InvalidOperationException("The result lists suggested tools"));
    }
 
    private static List<(Type Kind, string Name, int Line)> UnusedSymbolsIn(FindUnusedCodeResponse data, string fileName) =>

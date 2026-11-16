@@ -45,7 +45,7 @@ public class GetTypeMembersTool
    [Description("Get all members (methods, properties, fields, events) of a type with optional filtering by kind and inheritance.")]
    public async Task<ToolResult<GetTypeMembersResponse>> GetTypeMembersAsync(
       [Description("Type to get members for")] SymbolLookup target,
-      [Description("Include members from base classes (default: false)")]
+      [Description("Also list members inherited from base classes other than object, static ones included. Private members, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,
       [Description("Filter by member kind")]
       MemberKindFilter? memberKind = null,
@@ -59,21 +59,7 @@ public class GetTypeMembersTool
       var lookupResult = await _symbolLookup.FindSingleAsync<INamedTypeSymbol>(target, cancellationToken: cancellationToken);
       var type = lookupResult.Symbol;
 
-      var allMembers = new List<ISymbol>();
-
-      if (includeInherited)
-      {
-         var currentType = type;
-         while (currentType != null && currentType.SpecialType != SpecialType.System_Object)
-         {
-            allMembers.AddRange(currentType.GetMembers().Where(m => !m.IsImplicitlyDeclared));
-            currentType = currentType.BaseType;
-         }
-      }
-      else
-      {
-         allMembers.AddRange(type.GetMembers().Where(m => !m.IsImplicitlyDeclared));
-      }
+      var allMembers = RoslynHelpers.GetTypeMembers(type, includeInherited).ToList();
 
       // Filter by member kind
       if (memberKind.HasValue)
@@ -81,13 +67,8 @@ public class GetTypeMembersTool
          allMembers = allMembers.Where(m => MatchesMemberKind(m, memberKind.Value)).ToList();
       }
 
-      var uniqueMembers = allMembers
-         .GroupBy(m => m.Name + m.Kind.ToString())
-         .Select(g => g.First())
-         .Take(maxResults)
-         .ToList();
-
-      var totalCount = allMembers.GroupBy(m => m.Name + m.Kind.ToString()).Count();
+      var uniqueMembers = allMembers.Take(maxResults).ToList();
+      var totalCount = allMembers.Count;
       var formattedMembers = uniqueMembers
          .Select(m => RoslynHelpers.FormatMember(m, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths))
          .ToList();
@@ -108,7 +89,7 @@ public class GetTypeMembersTool
          suggestedNextTools: new[]
          {
             "get_method_signature to get detailed parameter info for a specific method",
-            $"get_base_types for {type.Name} to see inheritance chain",
+            $"get_base_types for {RoslynHelpers.GetName(type)} to see inheritance chain",
             "get_attributes to find decorated members"
          },
          totalCount: totalCount,

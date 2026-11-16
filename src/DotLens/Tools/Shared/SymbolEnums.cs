@@ -165,6 +165,7 @@ public enum SymbolKindDto
    Struct,
    Enum,
    Delegate,
+   Extension,
 
    // Members
    Method,
@@ -217,6 +218,7 @@ public static class SymbolKindExtensions
             TypeKind.Struct => SymbolKindDto.Struct,
             TypeKind.Enum => SymbolKindDto.Enum,
             TypeKind.Delegate => SymbolKindDto.Delegate,
+            TypeKind.Extension => SymbolKindDto.Extension,
             _ => SymbolKindDto.Unknown
          },
          IMethodSymbol method => method.MethodKind == MethodKind.Constructor ||

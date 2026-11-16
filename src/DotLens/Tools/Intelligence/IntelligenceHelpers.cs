@@ -52,6 +52,11 @@ internal static class IntelligenceHelpers
       switch (changeType)
       {
          case ChangeType.Rename:
+            if (symbol is INamedTypeSymbol { IsExtension: true })
+            {
+               suggestions.Add("Rename the block's receiver parameter or its members instead");
+               return (false, "An extension block has no name to rename", suggestions);
+            }
             suggestions.Add("Use rename_symbol for safe cross-solution rename");
             return (true, null, suggestions);
 
@@ -215,20 +220,6 @@ internal static class IntelligenceHelpers
       }
 
       return (null, null);
-   }
-
-   public static IEnumerable<ISymbol> GetInheritedMembers(INamedTypeSymbol type)
-   {
-      var baseType = type.BaseType;
-      while (baseType != null && baseType.SpecialType != SpecialType.System_Object)
-      {
-         foreach (var member in baseType.GetMembers())
-         {
-            if (!member.IsStatic && member.DeclaredAccessibility != Accessibility.Private)
-               yield return member;
-         }
-         baseType = baseType.BaseType;
-      }
    }
 }
 
