@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using DotLens.Infrastructure;
 using DotLens.Infrastructure.Results;
 using DotLens.Tools.Analysis;
+using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -52,8 +53,24 @@ public class AnalyzerDiagnosticsTests : IAsyncLifetime
       var loadResult = await workspaceManager.LoadSolutionAsync(_testFixturesSolutionPath);
       var json = JsonNode.Parse(JsonSerializer.Serialize(loadResult, loadResult.GetType(), TestJsonOptions.CamelCase))!;
       Assert.NotNull(json["data"]);  // Success indicated by presence of data
+      await AssertFrameworkReferencesResolvedAsync(workspaceManager.EnsureSolutionLoaded(), "AnalyzerTestProject");
 
       _getDiagnostics = new GetDiagnosticsTool(workspaceManager);
+   }
+
+   /// <summary>
+   /// Fails setup when the project's compilation cannot resolve <see cref="object"/>, so a load without framework
+   /// references fails with that cause instead of as missing CA2007/CA2016 diagnostics.
+   /// </summary>
+   private async Task AssertFrameworkReferencesResolvedAsync(Solution solution, string projectName)
+   {
+      var project = Assert.Single(solution.Projects, p => p.Name == projectName);
+      var compilation = await project.GetCompilationAsync(CT);
+      Assert.NotNull(compilation);
+      var objectType = compilation.GetSpecialType(SpecialType.System_Object);
+      Assert.True(
+         objectType.TypeKind != TypeKind.Error,
+         $"{projectName} loaded without framework references ({project.MetadataReferences.Count} metadata references); restore the fixture before loading it.");
    }
 
    public ValueTask DisposeAsync()
