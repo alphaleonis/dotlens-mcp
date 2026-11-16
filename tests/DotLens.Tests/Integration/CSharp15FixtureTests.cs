@@ -36,7 +36,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -1127,7 +1127,6 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
       Assert.Equal(
          [
-            (typeof(ClassSymbolResponse), "GridExtensions", 8),
             (typeof(ClassSymbolResponse), "GridUsage", 16),
             (typeof(MethodSymbolResponse), "SumThreeCorners", 18),
             (typeof(ConstructorSymbolResponse), ".ctor", 3),
@@ -1146,13 +1145,302 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
       Assert.Equal(
          [
-            (typeof(ClassSymbolResponse), "TextExtensions", 3),
             (typeof(ClassSymbolResponse), "TextUsage", 27),
             (typeof(PropertySymbolResponse), "IsEven", 16),
             (typeof(MethodSymbolResponse), "Doubled", 18),
             (typeof(MethodSymbolResponse), "Quiet", 29),
          ],
          UnusedSymbolsIn(result.Data, "ExtensionMembers.cs"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainerWithUsedBlockMembers_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+      var holders = AllExtensionBlocks.Select(b => b.ContainingType).ToHashSet();
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equivalent(
+         new[]
+         {
+            "CSharp15TestProject.CatalogExtensions",
+            "CSharp15TestProject.LedgerExtensions",
+            "CSharp15TestProject.MeterExtensions",
+            "CSharp15TestProject.SpoolExtensions",
+            "CSharp15TestProject.StaleExtensions",
+         },
+         result.Data.UnusedSymbols.OfType<ClassSymbolResponse>().Select(s => s.FullyQualifiedName).Where(holders.Contains),
+         strict: true);
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainers_ReportsExactlyUnusedContainersAndMembers()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "StaleExtensions", 10),
+            (typeof(ClassSymbolResponse), "LoopExtensions", 20),
+            (typeof(ClassSymbolResponse), "ContainerUsage", 36),
+            (typeof(MethodSymbolResponse), "Shout", 7),
+            (typeof(MethodSymbolResponse), "Tripled", 12),
+            (typeof(PropertySymbolResponse), "Halved", 16),
+            (typeof(MethodSymbolResponse), "Squared", 22),
+            (typeof(MethodSymbolResponse), "Score", 38),
+         ],
+         UnusedSymbolsIn(result.Data, "ExtensionContainers.cs"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainerWithUsedClassicMethod_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal([(typeof(MethodSymbolResponse), "Shout", 7)], UnusedSymbolsOf(result.Data, "WordExtensions"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainerWithOnlyUnusedMembers_ReportsContainerAndMembers()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "StaleExtensions", 10),
+            (typeof(MethodSymbolResponse), "Tripled", 12),
+            (typeof(PropertySymbolResponse), "Halved", 16),
+         ],
+         UnusedSymbolsOf(result.Data, "StaleExtensions"));
+   }
+
+   /// <summary>
+   /// Times has a use, but only from Squared in the same class, so no code outside LoopExtensions uses the class.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainerUsedOnlyByItsOwnMembers_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "LoopExtensions", 20),
+            (typeof(MethodSymbolResponse), "Squared", 22),
+         ],
+         UnusedSymbolsOf(result.Data, "LoopExtensions"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionContainerStaticConstructor_NotReportedWhenMembersUsed()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(
+         symbolKindFilter: SymbolKindFilter.Constructor, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Empty(UnusedSymbolsOf(result.Data, "SeededExtensions"));
+   }
+
+   /// <summary>
+   /// The summary of each class cites the class's own member, in CrefPartial from the other partial declaration.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_StaticClassCitedOnlyByItsOwnDocComment_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal([(typeof(ClassSymbolResponse), "CrefSelf", 6)], UnusedSymbolsOf(result.Data, "CrefSelf"));
+      Assert.Equal([(typeof(ClassSymbolResponse), "CrefPartial", 14)], UnusedSymbolsOf(result.Data, "CrefPartial"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_StaticClassNamedOnlyByItsOwnMembers_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "QualifiedSelf", 23),
+            (typeof(MethodSymbolResponse), "First", 25),
+         ],
+         UnusedSymbolsOf(result.Data, "QualifiedSelf"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ClassNamedOnlyByItsOwnMembers_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "Chain", 30),
+            (typeof(PropertySymbolResponse), "Next", 32),
+         ],
+         UnusedSymbolsOf(result.Data, "Chain"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_SelfReferencingMembers_ReportsExactlyUnusedSymbols()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "SelfCitedMembers", 3),
+            (typeof(ClassSymbolResponse), "TokenUsage", 32),
+            (typeof(MethodSymbolResponse), "Echo", 8),
+            (typeof(FieldSymbolResponse), "Stored", 13),
+            (typeof(MethodSymbolResponse), "Countdown", 15),
+            (typeof(MethodSymbolResponse), "Citer", 20),
+            (typeof(MethodSymbolResponse), "Read", 34),
+         ],
+         UnusedSymbolsIn(result.Data, "SelfReferencingMembers.cs"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_RecursiveMethodCalledOnlyByItself_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(
+         symbolKindFilter: SymbolKindFilter.Method, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [(typeof(MethodSymbolResponse), "Countdown", 15)],
+         UnusedSymbolsIn(result.Data, "SelfReferencingMembers.cs").Where(s => s.Name == "Countdown"));
+   }
+
+   /// <summary>
+   /// The doc comment of Echo cites Echo, and the doc comment of the field Stored cites Stored.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_MemberCitedOnlyByItsOwnDocComment_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(MethodSymbolResponse), "Echo", 8),
+            (typeof(FieldSymbolResponse), "Stored", 13),
+         ],
+         UnusedSymbolsIn(result.Data, "SelfReferencingMembers.cs").Where(s => s.Name is "Echo" or "Stored"));
+   }
+
+   /// <summary>
+   /// Only the doc comment of Citer cites Cited, and a cref counts as a use.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_MemberCitedByAnotherMembersDocComment_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [(typeof(MethodSymbolResponse), "Citer", 20)],
+         UnusedSymbolsIn(result.Data, "SelfReferencingMembers.cs").Where(s => s.Name is "Citer" or "Cited"));
+   }
+
+   /// <summary>
+   /// Only Create, a member of the same type, calls the primary constructor of Token.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_PrimaryConstructorCalledFromItsOwnType_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(
+         symbolKindFilter: SymbolKindFilter.Constructor, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Empty(UnusedSymbolsOf(result.Data, "Token"));
+   }
+
+   /// <summary>
+   /// The only reference to each field, event and property is the attribute on its own declaration.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_MembersNamedOnlyByTheirOwnAttributes_Reported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "AttributedFields", 5),
+            (typeof(FieldSymbolResponse), "Tag", 8),
+            (typeof(EventSymbolResponse), "Changed", 11),
+            (typeof(FieldSymbolResponse), "Left", 14),
+            (typeof(FieldSymbolResponse), "Right", 14),
+            (typeof(FieldSymbolResponse), "Derived", 16),
+            (typeof(PropertySymbolResponse), "Label", 19),
+         ],
+         UnusedSymbolsIn(result.Data, "AttributedFields.cs"));
+   }
+
+   /// <summary>
+   /// The attribute that names Left belongs to Left and Right alike, so it is part of Left's own declaration. The
+   /// initializer of Derived names Base from outside Base's declarator.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_FieldsSharingADeclaration_OwnOnlyTheirDeclaratorAndTheSharedPrefix()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(
+         symbolKindFilter: SymbolKindFilter.Field, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(FieldSymbolResponse), "Left", 14),
+            (typeof(FieldSymbolResponse), "Right", 14),
+            (typeof(FieldSymbolResponse), "Derived", 16),
+         ],
+         UnusedSymbolsIn(result.Data, "AttributedFields.cs").Where(s => s.Line is 14 or 16));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ModuleInitializerAndItsClass_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Empty(UnusedSymbolsIn(result.Data, "ModuleInitializers.cs"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_TypesNamedByUsingStaticNameofOrAttribute_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "ImplicitTypeUsage", 18),
+            (typeof(MethodSymbolResponse), "Use", 20),
+         ],
+         UnusedSymbolsIn(result.Data, "ImplicitTypeUses.cs"));
    }
 
    private static readonly ExtensionSymbolResponse GridExtensionBlock = new()
@@ -1241,6 +1529,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Name = "extension<TKey, TValue>(IDictionary<TKey, TValue>)",
          Location = new SymbolLocation { FilePath = "ExtensionBlockHeaders.cs", Line = 16, Column = 4 },
          ContainingType = "CSharp15TestProject.CatalogExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(long)",
+         Location = new SymbolLocation { FilePath = "ExtensionContainers.cs", Line = 14, Column = 4 },
+         ContainingType = "CSharp15TestProject.StaleExtensions",
       },
       GridExtensionBlock,
       GridExtensionBlock with
@@ -1361,6 +1655,14 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "AmbiguousMembers.cs:83:15 Stamp",
       "AmbiguousMembers.cs:83:28 Value",
       "AmbiguousMembers.cs:8:21 Reel",
+      "AttributedFields.cs:11:32 Changed",
+      "AttributedFields.cs:14:22 Left",
+      "AttributedFields.cs:14:28 Right",
+      "AttributedFields.cs:16:22 Base",
+      "AttributedFields.cs:16:32 Derived",
+      "AttributedFields.cs:19:25 Label",
+      "AttributedFields.cs:5:21 AttributedFields",
+      "AttributedFields.cs:8:22 Tag",
       "DelegateSignatures.cs:3:21 DelegateSignatures",
       "DelegateSignatures.cs:5:24 Selector",
       "DelegateSignatures.cs:7:30 Formatter",
@@ -1379,6 +1681,21 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "ExtensionBlockHeaders.cs:22:19 Spare",
       "ExtensionBlockHeaders.cs:3:21 CatalogExtensions",
       "ExtensionBlockHeaders.cs:8:4 extension(Catalog)",
+      "ExtensionContainers.cs:10:21 StaleExtensions",
+      "ExtensionContainers.cs:12:22 Tripled",
+      "ExtensionContainers.cs:14:4 extension(long)",
+      "ExtensionContainers.cs:16:19 Halved",
+      "ExtensionContainers.cs:20:21 LoopExtensions",
+      "ExtensionContainers.cs:22:22 Squared",
+      "ExtensionContainers.cs:24:22 Times",
+      "ExtensionContainers.cs:27:21 SeededExtensions",
+      "ExtensionContainers.cs:29:32 Seed",
+      "ExtensionContainers.cs:33:22 Salted",
+      "ExtensionContainers.cs:36:21 ContainerUsage",
+      "ExtensionContainers.cs:38:22 Score",
+      "ExtensionContainers.cs:3:21 WordExtensions",
+      "ExtensionContainers.cs:5:22 Vowels",
+      "ExtensionContainers.cs:7:25 Shout",
       "ExtensionIndexer.cs:10:4 extension(Grid)",
       "ExtensionIndexer.cs:12:18 this[]",
       "ExtensionIndexer.cs:16:21 GridUsage",
@@ -1398,6 +1715,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "ExtensionMembers.cs:5:4 extension(string)",
       "ExtensionMembers.cs:7:19 IsShout",
       "ExtensionMembers.cs:9:21 Whisper",
+      "ImplicitTypeUses.cs:10:21 NamedOnly",
+      "ImplicitTypeUses.cs:15:21 MarkerAttribute",
+      "ImplicitTypeUses.cs:18:21 ImplicitTypeUsage",
+      "ImplicitTypeUses.cs:20:22 Use",
+      "ImplicitTypeUses.cs:5:21 Imported",
+      "ImplicitTypeUses.cs:7:22 Answer",
       "IndexerUses.cs:12:21 Score",
       "IndexerUses.cs:14:15 Total",
       "IndexerUses.cs:18:17 Add",
@@ -1493,6 +1816,8 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "LabeledLoops.cs:3:21 LabeledLoops",
       "LabeledLoops.cs:41:22 FindNegativeRow",
       "LabeledLoops.cs:5:22 CountRowsBeforeNegative",
+      "ModuleInitializers.cs:5:21 ModuleSetup",
+      "ModuleInitializers.cs:8:23 Initialize",
       "MultiLineSignatures.cs:17:16 _disposals",
       "MultiLineSignatures.cs:19:32 Disposed",
       "MultiLineSignatures.cs:30:15 Count",
@@ -1537,6 +1862,26 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "RefReceiverExtensions.cs:42:19 Clear",
       "RefReceiverExtensions.cs:5:15 Reading",
       "RefReceiverExtensions.cs:8:21 MeterExtensions",
+      "SelfReferences.cs:14:29 CrefPartial",
+      "SelfReferences.cs:20:22 Pong",
+      "SelfReferences.cs:23:21 QualifiedSelf",
+      "SelfReferences.cs:25:22 First",
+      "SelfReferences.cs:27:22 Second",
+      "SelfReferences.cs:30:21 Chain",
+      "SelfReferences.cs:32:18 Next",
+      "SelfReferences.cs:6:21 CrefSelf",
+      "SelfReferences.cs:8:22 Ping",
+      "SelfReferencingMembers.cs:13:22 Stored",
+      "SelfReferencingMembers.cs:15:22 Countdown",
+      "SelfReferencingMembers.cs:20:22 Citer",
+      "SelfReferencingMembers.cs:22:22 Cited",
+      "SelfReferencingMembers.cs:25:21 Token",
+      "SelfReferencingMembers.cs:27:15 Value",
+      "SelfReferencingMembers.cs:29:24 Create",
+      "SelfReferencingMembers.cs:32:21 TokenUsage",
+      "SelfReferencingMembers.cs:34:22 Read",
+      "SelfReferencingMembers.cs:3:21 SelfCitedMembers",
+      "SelfReferencingMembers.cs:8:22 Echo",
       "Unions.cs:11:25 Area",
       "Unions.cs:3:15 Circle",
       "Unions.cs:3:29 Radius",
@@ -2061,16 +2406,20 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             (typeof(ClassSymbolResponse), "CatalogExtensions"),
             (typeof(ClassSymbolResponse), "GridExtensions"),
             (typeof(ClassSymbolResponse), "LedgerExtensions"),
+            (typeof(ClassSymbolResponse), "LoopExtensions"),
             (typeof(ClassSymbolResponse), "MeterExtensions"),
+            (typeof(ClassSymbolResponse), "SeededExtensions"),
             (typeof(ClassSymbolResponse), "SpoolExtensions"),
+            (typeof(ClassSymbolResponse), "StaleExtensions"),
             (typeof(ClassSymbolResponse), "TextExtensions"),
+            (typeof(ClassSymbolResponse), "WordExtensions"),
             .. AllExtensionBlocks.Select(b => (typeof(ExtensionSymbolResponse), b.Name)).OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase),
          ],
          result.Data.Items.Select(s => (s.GetType(), s.Name)));
    }
 
    [Theory]
-   [InlineData("extension*", 18)]
+   [InlineData("extension*", 19)]
    [InlineData("extension(ref Meter)", 1)]
    [InlineData("Extension(Grid)", 1)]
    public async Task FindSymbols_ExtensionBlockName_NameMatchesBlockName(string name, int expectedCount)
@@ -2150,4 +2499,19 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .Where(s => s.Location?.FilePath == fileName)
          .Select(s => (s.GetType(), s.Name, s.Location?.Line ?? 0))
          .ToList();
+
+   /// <summary>
+   /// Returns the unused symbols that are the fixture's type <paramref name="typeName"/> or that it contains, an extension
+   /// block's members included.
+   /// </summary>
+   private static List<(Type Kind, string Name, int Line)> UnusedSymbolsOf(FindUnusedCodeResponse data, string typeName)
+   {
+      var qualifiedName = $"CSharp15TestProject.{typeName}";
+      return data.UnusedSymbols
+         .Where(s => s.FullyQualifiedName == qualifiedName
+            || s.ContainingType == qualifiedName
+            || s.ContainingType?.StartsWith($"{qualifiedName}.extension", StringComparison.Ordinal) == true)
+         .Select(s => (s.GetType(), s.Name, s.Location?.Line ?? 0))
+         .ToList();
+   }
 }
