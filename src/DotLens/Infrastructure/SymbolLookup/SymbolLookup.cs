@@ -32,12 +32,12 @@ public class LookupByPosition : SymbolLookup
 
 /// <summary>
 /// Locate symbol by name. Accepts type names, member paths, or FQNs.
-/// For overloaded methods, use parameterTypes and/or returnType to disambiguate.
+/// For overloaded methods and indexers, use parameterTypes and/or returnType to disambiguate.
 /// </summary>
 [Description("Locate by name. Use parameterTypes/returnType for overloads.")]
 public class LookupByName : SymbolLookup
 {
-   [Description("Symbol name, e.g. 'MyClass.Method'")]
+   [Description("Symbol name, e.g. 'MyClass.Method', 'MyClass.this[]' or 'MyExtensions.extension(Receiver).Method'")]
    public required string Name { get; set; }
 
    [Description("Limit to specific project")]

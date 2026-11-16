@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -9,6 +10,12 @@ namespace DotLens.Infrastructure.SymbolLookup;
 /// </summary>
 public class SymbolLookupService
 {
+   /// <summary>
+   /// The recovery hint of the error for a lookup that matches more than one symbol.
+   /// </summary>
+   public const string AmbiguityHint =
+      "Look up one candidate by the name listed, without its parameter list (an indexer's name is this[]). Pass the listed parameter types as parameterTypes and a listed return type as returnType. Where a location is listed, use position mode with it instead. A name without type parameters also matches the candidates that differ from it only in type parameters";
+
    private readonly IReadOnlyWorkspace _workspaceManager;
 
    /// <summary>
@@ -96,12 +103,7 @@ public class SymbolLookupService
 
       if (results.Count > 1)
       {
-         var symbols = results.Select(r => FormatSymbolForError(r.Symbol)).ToList();
-         throw new ToolException(
-            ErrorCodes.AmbiguousSymbol,
-            $"Multiple symbols found ({results.Count}): {string.Join(", ", symbols.Take(5))}" +
-            (symbols.Count > 5 ? $" and {symbols.Count - 5} more" : ""),
-            "Use parameterTypes/returnType in name mode to disambiguate overloads, or use position mode");
+         throw await AmbiguousSymbolErrorAsync("symbols", results.Select(r => (ISymbol)r.Symbol).ToList(), cancellationToken);
       }
 
       return results[0];
@@ -189,12 +191,7 @@ public class SymbolLookupService
 
       if (sourceResults.Count > 1)
       {
-         var symbols = sourceResults.Select(r => FormatSymbolForError(r.Symbol)).ToList();
-         throw new ToolException(
-            ErrorCodes.AmbiguousSymbol,
-            $"Multiple source symbols found ({sourceResults.Count}): {string.Join(", ", symbols.Take(5))}" +
-            (symbols.Count > 5 ? $" and {symbols.Count - 5} more" : ""),
-            "Use parameterTypes/returnType in name mode to disambiguate overloads, or use position mode");
+         throw await AmbiguousSymbolErrorAsync("source symbols", sourceResults.Select(r => (ISymbol)r.Symbol).ToList(), cancellationToken);
       }
 
       return sourceResults[0];
@@ -379,6 +376,15 @@ public class SymbolLookupService
             "Provide a valid symbol name");
       }
 
+      var segments = SplitQualifiedName(name);
+      if (segments.Any(string.IsNullOrEmpty))
+      {
+         throw new ToolException(
+            ErrorCodes.InvalidParameter,
+            $"Invalid symbol name '{name}': contains empty segments (leading, trailing, or consecutive dots)",
+            "Provide a valid symbol name without leading, trailing, or consecutive dots");
+      }
+
       var results = new List<SymbolLookupResult<TSymbol>>();
 
       // Determine which projects to search
@@ -397,18 +403,9 @@ public class SymbolLookupService
          if (compilation == null)
             continue;
 
-         IEnumerable<TSymbol> symbols;
-
-         if (!name.Contains('.'))
-         {
-            // Simple name: use GetSymbolsWithName for efficiency
-            symbols = FindSymbolsBySimpleName<TSymbol>(compilation, name);
-         }
-         else
-         {
-            // Dotted pattern: use progressive resolution
-            symbols = ResolveProgressively<TSymbol>(compilation, name);
-         }
+         var symbols = segments.Length == 1
+            ? FindSymbolsBySimpleName<TSymbol>(compilation, segments[0])
+            : ResolveProgressively<TSymbol>(compilation, segments);
 
          foreach (var typedSymbol in symbols)
          {
@@ -456,9 +453,12 @@ public class SymbolLookupService
          _ => SymbolFilter.All
       };
 
+      var name = ParseSegment(simpleName).Name;
       return compilation.GetSymbolsWithName(
-         name => string.Equals(name, simpleName, StringComparison.Ordinal),
-         filter).OfType<TSymbol>();
+            candidate => string.Equals(candidate, name, StringComparison.Ordinal),
+            filter)
+         .Where(symbol => SegmentMatches(symbol, simpleName))
+         .OfType<TSymbol>();
    }
 
    /// <summary>
@@ -467,19 +467,8 @@ public class SymbolLookupService
    /// </summary>
    private static IEnumerable<TSymbol> ResolveProgressively<TSymbol>(
       Compilation compilation,
-      string dottedName) where TSymbol : ISymbol
+      string[] segments) where TSymbol : ISymbol
    {
-      var segments = dottedName.Split('.');
-
-      // Validate: no empty segments (from leading/trailing/consecutive dots)
-      if (segments.Any(string.IsNullOrEmpty))
-      {
-         throw new ToolException(
-            ErrorCodes.InvalidParameter,
-            $"Invalid symbol name '{dottedName}': contains empty segments (leading, trailing, or consecutive dots)",
-            "Provide a valid symbol name without leading, trailing, or consecutive dots");
-      }
-
       // Start resolution from global namespace
       var results = new List<ISymbol>();
       ResolveSegments(compilation.GlobalNamespace, segments, 0, results);
@@ -488,14 +477,14 @@ public class SymbolLookupService
       // with container filtering (handles cases like searching for "System.Console")
       if (results.Count == 0)
       {
-         var simpleName = segments[^1];
-         var containerPattern = string.Join(".", segments[..^1]);
+         var simpleName = ParseSegment(segments[^1]).Name;
+         var containerSegments = segments[..^1];
 
          foreach (var symbol in compilation.GetSymbolsWithName(
             name => string.Equals(name, simpleName, StringComparison.Ordinal),
             SymbolFilter.All))
          {
-            if (MatchesContainer(symbol, containerPattern))
+            if (SegmentMatches(symbol, segments[^1]) && MatchesContainer(symbol, containerSegments))
             {
                results.Add(symbol);
             }
@@ -528,10 +517,7 @@ public class SymbolLookupService
       var segment = segments[index];
       var isLastSegment = index == segments.Length - 1;
 
-      // Get all members matching this segment name
-      var members = container.GetMembers(segment);
-
-      foreach (var member in members)
+      foreach (var member in GetMembersMatching(container, segment))
       {
          if (isLastSegment)
          {
@@ -548,38 +534,150 @@ public class SymbolLookupService
       }
    }
 
+   private static IEnumerable<ISymbol> GetMembersMatching(INamespaceOrTypeSymbol container, string segment)
+   {
+      var members = container.GetMembers(ParseSegment(segment).Name).Where(member => SegmentMatches(member, segment));
+      var extensionBlocks = container is INamedTypeSymbol type
+         ? type.GetTypeMembers().Where(member => member.IsExtension && RoslynHelpers.IsExtensionBlockNamed(member, segment))
+         : [];
+      return members.Concat(extensionBlocks);
+   }
+
    /// <summary>
-   /// Check if a symbol's containing path matches the expected container pattern.
+   /// Check if a symbol's containers end with the expected container segments.
    /// Used as fallback when progressive resolution doesn't find results.
    /// </summary>
-   private static bool MatchesContainer(ISymbol symbol, string containerPattern)
+   /// <remarks>
+   /// An extension member matches with or without its extension block among the segments, so
+   /// <c>Holder.Member</c> matches the member of every block in <c>Holder</c>.
+   /// </remarks>
+   private static bool MatchesContainer(ISymbol symbol, string[] containerSegments)
    {
-      // Build the container path for this symbol
-      var container = symbol.ContainingSymbol;
-      var parts = new List<string>();
-
-      while (container != null && container is not IAssemblySymbol)
+      if (symbol.ContainingSymbol is INamedTypeSymbol { IsExtension: true } block)
       {
-         if (!string.IsNullOrEmpty(container.Name))
-         {
-            parts.Add(container.Name);
-         }
+         var holders = GetNamedContainers(block.ContainingSymbol);
+         return ContainersEndWith(holders, containerSegments)
+            || (containerSegments.Length > 0
+               && RoslynHelpers.IsExtensionBlockNamed(block, containerSegments[^1])
+               && ContainersEndWith(holders, containerSegments[..^1]));
+      }
+
+      return ContainersEndWith(GetNamedContainers(symbol.ContainingSymbol), containerSegments);
+   }
+
+   /// <summary>
+   /// Returns the namespaces and types that hold <paramref name="container"/>, and it, outermost first and without the
+   /// global namespace.
+   /// </summary>
+   private static List<ISymbol> GetNamedContainers(ISymbol? container)
+   {
+      var containers = new List<ISymbol>();
+      while (container is INamespaceOrTypeSymbol and not INamespaceSymbol { IsGlobalNamespace: true })
+      {
+         containers.Add(container);
          container = container.ContainingSymbol;
       }
 
-      parts.Reverse();
-      var actualContainer = string.Join(".", parts);
+      containers.Reverse();
+      return containers;
+   }
 
-      // Check if the pattern matches the actual container at segment boundaries
-      // E.g., pattern "System" matches "System" or "Foo.System" but not "FileSystem"
-      if (string.Equals(actualContainer, containerPattern, StringComparison.Ordinal))
-         return true;
+   /// <summary>
+   /// Returns whether the last containers match the segments, one each, so <c>System</c> matches <c>Foo.System</c>
+   /// but not <c>FileSystem</c>.
+   /// </summary>
+   private static bool ContainersEndWith(List<ISymbol> containers, string[] segments)
+   {
+      var offset = containers.Count - segments.Length;
+      if (offset < 0)
+         return false;
 
-      // Check for segment-boundary match (must be preceded by a dot)
-      if (containerPattern.Length > 0 && actualContainer.EndsWith("." + containerPattern, StringComparison.Ordinal))
-         return true;
+      for (var i = 0; i < segments.Length; i++)
+      {
+         if (!SegmentMatches(containers[offset + i], segments[i]))
+            return false;
+      }
 
-      return false;
+      return true;
+   }
+
+   /// <summary>
+   /// Returns whether a symbol has the name in a segment and, when the segment lists type parameters as in
+   /// <c>Box&lt;T&gt;</c>, as many type parameters. A segment without them matches every arity.
+   /// </summary>
+   private static bool SegmentMatches(ISymbol symbol, string segment)
+   {
+      var (name, arity) = ParseSegment(segment);
+      if (!string.Equals(symbol.Name, name, StringComparison.Ordinal))
+         return false;
+
+      return arity is not { } expected || expected == symbol switch
+      {
+         INamedTypeSymbol type => type.Arity,
+         IMethodSymbol method => method.Arity,
+         _ => 0
+      };
+   }
+
+   /// <summary>
+   /// Splits a segment such as <c>Map&lt;K, V&gt;</c> into its name and the number of type parameters it lists.
+   /// </summary>
+   /// <returns>The name, and the arity, or null when the segment lists no type parameters.</returns>
+   private static (string Name, int? Arity) ParseSegment(string segment)
+   {
+      var open = segment.IndexOf('<');
+      if (open <= 0 || !segment.EndsWith('>'))
+         return (segment, null);
+
+      var arity = 1;
+      var depth = 0;
+      foreach (var c in segment.AsSpan(open + 1, segment.Length - open - 2))
+      {
+         switch (c)
+         {
+            case '<' or '(' or '[':
+               depth++;
+               break;
+            case '>' or ')' or ']':
+               depth--;
+               break;
+            case ',' when depth == 0:
+               arity++;
+               break;
+         }
+      }
+
+      return (segment[..open], arity);
+   }
+
+   /// <summary>
+   /// Splits a dotted name at the dots outside brackets, so <c>Holder.extension(Geometry.Grid).this[]</c> has three
+   /// segments.
+   /// </summary>
+   private static string[] SplitQualifiedName(string name)
+   {
+      var segments = new List<string>();
+      var depth = 0;
+      var start = 0;
+      for (var i = 0; i < name.Length; i++)
+      {
+         switch (name[i])
+         {
+            case '<' or '(' or '[':
+               depth++;
+               break;
+            case '>' or ')' or ']' when depth > 0:
+               depth--;
+               break;
+            case '.' when depth == 0:
+               segments.Add(name[start..i]);
+               start = i + 1;
+               break;
+         }
+      }
+
+      segments.Add(name[start..]);
+      return segments.ToArray();
    }
 
    private static async Task<SymbolLookupResult<TSymbol>> CreateResultAsync<TSymbol>(
@@ -622,27 +720,33 @@ public class SymbolLookupService
 
    /// <summary>
    /// Checks if a symbol matches the given parameter types and return type filters.
-   /// Only method symbols can match; non-method symbols are filtered out.
+   /// Only methods and indexers can match, and an indexer's type counts as its return type.
    /// </summary>
    private static bool MatchesSignatureFilter(ISymbol symbol, string[]? parameterTypes, string? returnType)
    {
-      if (symbol is not IMethodSymbol method)
+      var (parameters, type) = symbol switch
+      {
+         IMethodSymbol method => (method.Parameters, method.ReturnType),
+         IPropertySymbol { IsIndexer: true } indexer => (indexer.Parameters, indexer.Type),
+         _ => ([], null)
+      };
+      if (type is null)
          return false;
 
       if (parameterTypes != null)
       {
-         if (method.Parameters.Length != parameterTypes.Length)
+         if (parameters.Length != parameterTypes.Length)
             return false;
          for (var i = 0; i < parameterTypes.Length; i++)
          {
-            if (!ParameterMatches(method.Parameters[i], parameterTypes[i]))
+            if (!ParameterMatches(parameters[i], parameterTypes[i]))
                return false;
          }
       }
 
       if (returnType != null)
       {
-         if (!TypeNameMatches(method.ReturnType, returnType))
+         if (!TypeNameMatches(type, returnType))
             return false;
       }
 
@@ -732,15 +836,122 @@ public class SymbolLookupService
       _ => lookup.ToString() ?? "unknown"
    };
 
-   private static string FormatSymbolForError(ISymbol symbol)
+   /// <summary>
+   /// Returns the error for a lookup that matched more than one symbol. It lists the candidates in the forms that
+   /// <see cref="AmbiguityHint"/> tells a caller to look them up with.
+   /// </summary>
+   private async Task<ToolException> AmbiguousSymbolErrorAsync(string kind, List<ISymbol> candidates, CancellationToken cancellationToken)
    {
-      return symbol switch
+      var descriptions = candidates.Select(DescribeCandidate).ToList();
+      var sameName = descriptions
+         .GroupBy(d => d.NameWithoutTypeParameters)
+         .Where(group => group.Count() > 1)
+         .Select(group => group.Key)
+         .ToHashSet(StringComparer.Ordinal);
+
+      var listed = new List<string>();
+      foreach (var (candidate, description) in candidates.Zip(descriptions).Take(5))
       {
-         IMethodSymbol method => $"{method.ContainingType?.Name}.{method.Name}({string.Join(", ", method.Parameters.Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)))})",
-         IPropertySymbol prop => $"{prop.ContainingType?.Name}.{prop.Name}",
-         IFieldSymbol field => $"{field.ContainingType?.Name}.{field.Name}",
-         INamedTypeSymbol type => type.ToDisplayString(),
-         _ => symbol.ToDisplayString()
+         listed.Add(sameName.Contains(description.NameWithoutTypeParameters)
+            && await FormatDeclarationPositionAsync(candidate, cancellationToken) is { } position
+               ? $"{description.Text} at {position}"
+               : description.Text);
+      }
+
+      if (candidates.Count > 5)
+         listed.Add($"and {candidates.Count - 5} more");
+
+      return new ToolException(
+         ErrorCodes.AmbiguousSymbol,
+         $"Multiple {kind} found ({candidates.Count}): {string.Join("; ", listed)}",
+         AmbiguityHint);
+   }
+
+   /// <summary>
+   /// Describes a candidate by a name that a name lookup resolves, then its parameter types and, for a conversion, its
+   /// return type, in the forms that parameterTypes and returnType accept.
+   /// </summary>
+   /// <returns>
+   /// The description, and the same text without the type-parameter lists. A segment without a type-parameter list
+   /// matches every arity, so a name may not tell apart candidates that share the latter.
+   /// </returns>
+   private static (string Text, string NameWithoutTypeParameters) DescribeCandidate(ISymbol symbol)
+   {
+      var segments = new List<(string Name, string TypeParameters)>();
+      for (var current = symbol; current is not (null or INamespaceSymbol { IsGlobalNamespace: true }); current = current.ContainingSymbol)
+      {
+         segments.Add(current switch
+         {
+            INamedTypeSymbol { IsExtension: true } block => (RoslynHelpers.GetFullyQualifiedExtensionBlockName(block), ""),
+            INamedTypeSymbol type => (type.Name, FormatTypeParameters(type.TypeParameters)),
+            IMethodSymbol method => (method.Name, FormatTypeParameters(method.TypeParameters)),
+            _ => (current.Name, "")
+         });
+      }
+
+      segments.Reverse();
+      var name = string.Join(".", segments.Select(s => s.Name + s.TypeParameters));
+      var bareName = string.Join(".", segments.Select(s => s.Name));
+
+      var signature = symbol switch
+      {
+         IPropertySymbol { IsIndexer: true } indexer => $"[{FormatParameters(indexer.Parameters)}]",
+         IMethodSymbol { MethodKind: MethodKind.Conversion } conversion =>
+            $"({FormatParameters(conversion.Parameters)}) returns {conversion.ReturnType.ToDisplayString(NamespacedKeywordFormat)}",
+         IMethodSymbol method => $"({FormatParameters(method.Parameters)})",
+         _ => ""
       };
+
+      // An indexer's name, this[], takes its parameter list between the brackets.
+      return symbol is IPropertySymbol { IsIndexer: true }
+         ? (name[..^1] + signature[1..], bareName[..^1] + signature[1..])
+         : (name + signature, bareName + signature);
+   }
+
+   private static string FormatTypeParameters(ImmutableArray<ITypeParameterSymbol> typeParameters) =>
+      typeParameters.IsEmpty ? "" : $"<{string.Join(", ", typeParameters.Select(t => t.Name))}>";
+
+   private static string FormatParameters(ImmutableArray<IParameterSymbol> parameters) =>
+      string.Join(", ", parameters.Select(p => FormatParameterModifier(p) + p.Type.ToDisplayString(NamespacedKeywordFormat)));
+
+   /// <summary>
+   /// Returns the modifier prefix that <see cref="ParseParameterModifier"/> reads back for the parameter.
+   /// </summary>
+   private static string FormatParameterModifier(IParameterSymbol parameter) => parameter.RefKind switch
+   {
+      RefKind.None => parameter.IsParams ? "params " : "",
+      RefKind.Ref => "ref ",
+      RefKind.Out => "out ",
+      RefKind.In => "in ",
+      RefKind.RefReadOnlyParameter => "ref readonly ",
+      _ => throw new InvalidOperationException($"Unexpected ref kind: {parameter.RefKind}")
+   };
+
+   /// <returns>
+   /// The file, line and column of the symbol's declared name, or null when a position lookup there does not find the
+   /// symbol, as for a record's positional property, which the lookup finds as its constructor parameter.
+   /// </returns>
+   private async Task<string?> FormatDeclarationPositionAsync(ISymbol symbol, CancellationToken cancellationToken)
+   {
+      if (symbol.IsImplicitlyDeclared
+         || symbol.Locations.FirstOrDefault(l => l.IsInSource) is not { SourceTree.FilePath: { } filePath } location)
+         return null;
+
+      var start = location.GetLineSpan().StartLinePosition;
+      var lookup = new LookupByPosition { FilePath = filePath, Line = start.Line + 1, Column = start.Character + 1 };
+      IReadOnlyList<SymbolLookupResult<ISymbol>> found;
+      try
+      {
+         found = await FindByPositionAsync<ISymbol>(lookup, cancellationToken);
+      }
+      catch (ToolException)
+      {
+         // Position mode fails at this location too, so the error cannot offer it.
+         return null;
+      }
+
+      return found is [{ Symbol: var foundSymbol }] && SymbolEqualityComparer.Default.Equals(foundSymbol, symbol)
+         ? $"{_workspaceManager.FormatPath(filePath)}:{lookup.Line}:{lookup.Column}"
+         : null;
    }
 }

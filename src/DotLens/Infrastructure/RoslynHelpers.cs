@@ -897,14 +897,33 @@ public static class RoslynHelpers
    }
 
    /// <summary>
+   /// Returns whether <paramref name="name"/> is the header of the extension block, with its receiver's type named as in
+   /// the block's name, such as <c>extension(Grid)</c>, or as in its fully qualified name, such as
+   /// <c>extension(Geometry.Grid)</c>.
+   /// </summary>
+   public static bool IsExtensionBlockNamed(INamedTypeSymbol extension, string name) =>
+      string.Equals(GetExtensionBlockName(extension), name, StringComparison.Ordinal)
+      || string.Equals(GetFullyQualifiedExtensionBlockName(extension), name, StringComparison.Ordinal);
+
+   /// <summary>
    /// Returns the header of an extension block without the receiver's name, such as <c>extension(scoped ref Meter)</c>.
    /// </summary>
-   private static string GetExtensionBlockName(INamedTypeSymbol extension)
+   private static string GetExtensionBlockName(INamedTypeSymbol extension) =>
+      GetExtensionBlockName(extension, SymbolDisplayFormat.MinimallyQualifiedFormat);
+
+   /// <summary>
+   /// Returns the header of an extension block with its receiver's type fully qualified, such as
+   /// <c>extension(Geometry.Grid)</c>.
+   /// </summary>
+   public static string GetFullyQualifiedExtensionBlockName(INamedTypeSymbol extension) =>
+      GetExtensionBlockName(extension, SymbolDisplayFormat.CSharpErrorMessageFormat);
+
+   private static string GetExtensionBlockName(INamedTypeSymbol extension, SymbolDisplayFormat format)
    {
       // Roslyn's display keeps the receiver's ref and scoped modifiers but always prefixes the containing type.
-      var display = extension.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+      var display = extension.ToDisplayString(format);
       var containerPrefix = extension.ContainingType is { } container
-         ? container.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) + "."
+         ? container.ToDisplayString(format) + "."
          : "";
       return display.StartsWith(containerPrefix, StringComparison.Ordinal) ? display[containerPrefix.Length..] : display;
    }
