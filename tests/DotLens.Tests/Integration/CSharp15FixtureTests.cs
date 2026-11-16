@@ -1,7 +1,9 @@
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Analysis;
 using DotLens.Tools.Intelligence;
+using DotLens.Tools.Navigation;
 using DotLens.Tools.Search;
+using DotLens.Tools.Shared;
 using Xunit;
 
 namespace DotLens.Tests.Integration;
@@ -121,5 +123,138 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          new LookupByPosition { FilePath = _fixture.GetPath("Unions.cs"), Line = 7, Column = 14 },
          cancellationToken: CT);
       Assert.Equivalent(data, byPosition.Data, strict: true);
+   }
+
+   [Fact]
+   public async Task ControlFlow_LabeledBreak()
+   {
+      var tool = new AnalyzeControlFlowTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var path = _fixture.GetPath("LabeledLoops.cs");
+
+      var method = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByMethod { Method = new LookupByName { Name = "LabeledLoops.FindNegativeRow" } }, CT);
+      AssertControlFlow(
+         method.Data,
+         region: (43, 55),
+         exitPoints: [new ControlFlowPoint { Line = 55, Kind = "ReturnStatement" }],
+         returnStatements: [new ControlFlowPoint { Line = 55, Kind = "ReturnStatement", Text = "return i;" }],
+         endPointIsReachable: false);
+
+      var returnStatement = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 55, EndLine = 55 }, CT);
+      AssertControlFlow(
+         returnStatement.Data,
+         region: (55, 55),
+         exitPoints: [new ControlFlowPoint { Line = 55, Kind = "ReturnStatement" }],
+         returnStatements: [new ControlFlowPoint { Line = 55, Kind = "ReturnStatement", Text = "return i;" }],
+         endPointIsReachable: false,
+         startPointIsReachable: true); // Only break outer reaches the return.
+
+      var outerLoop = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 44, EndLine = 53 }, CT);
+      AssertControlFlow(outerLoop.Data, region: (44, 53), exitPoints: [], returnStatements: [], endPointIsReachable: true);
+
+      // The inner while (true) has no break of its own, so its end is unreachable.
+      var innerWhile = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 47, EndLine = 52 }, CT);
+      AssertControlFlow(
+         innerWhile.Data,
+         region: (47, 52),
+         exitPoints: [new ControlFlowPoint { Line = 50, Kind = "BreakStatement" }],
+         returnStatements: [],
+         endPointIsReachable: false);
+
+      var innerFor = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 11, EndLine = 15 }, CT);
+      AssertControlFlow(
+         innerFor.Data,
+         region: (11, 15),
+         exitPoints: [new ControlFlowPoint { Line = 14, Kind = "BreakStatement" }],
+         returnStatements: [],
+         endPointIsReachable: true);
+   }
+
+   [Fact]
+   public async Task ControlFlow_LabeledContinue()
+   {
+      var tool = new AnalyzeControlFlowTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var path = _fixture.GetPath("LabeledLoops.cs");
+
+      var innerFor = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 29, EndLine = 33 }, CT);
+      AssertControlFlow(
+         innerFor.Data,
+         region: (29, 33),
+         exitPoints: [new ControlFlowPoint { Line = 32, Kind = "ContinueStatement" }],
+         returnStatements: [],
+         endPointIsReachable: true);
+
+      var outerLoop = await tool.AnalyzeControlFlowAsync(
+         new ControlFlowTargetByLines { FilePath = path, StartLine = 26, EndLine = 36 }, CT);
+      AssertControlFlow(outerLoop.Data, region: (26, 36), exitPoints: [], returnStatements: [], endPointIsReachable: true);
+   }
+
+   private static void AssertControlFlow(
+      ControlFlowResponse data,
+      (int Start, int End) region,
+      ControlFlowPoint[] exitPoints,
+      ControlFlowPoint[] returnStatements,
+      bool endPointIsReachable,
+      bool startPointIsReachable = true)
+   {
+      Assert.Equal(new LineRange { StartLine = region.Start, EndLine = region.End }, data.Region);
+      Assert.Empty(data.EntryPoints);
+      Assert.Equal(exitPoints, data.ExitPoints);
+      Assert.Equal(returnStatements, data.ReturnStatements);
+      Assert.Equal(endPointIsReachable, data.EndPointIsReachable);
+      Assert.Equal(startPointIsReachable, data.StartPointIsReachable);
+   }
+
+   [Fact]
+   public async Task FindReferences_ExtensionIndexer()
+   {
+      var tool = new FindReferencesTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      ReferenceInfo[] expected =
+      [
+         new() { FilePath = "ExtensionIndexer.cs", Line = 20, Column = 25, Kind = ReferenceKind.Read },
+         new() { FilePath = "ExtensionIndexer.cs", Line = 21, Column = 26, Kind = ReferenceKind.Read },
+         new() { FilePath = "ExtensionIndexer.cs", Line = 22, Column = 28, Kind = ReferenceKind.Read },
+      ];
+
+      SymbolLookup[] lookups =
+      [
+         new LookupByPosition { FilePath = _fixture.GetPath("ExtensionIndexer.cs"), Line = 12, Column = 18 },
+         new LookupByName { Name = "GridExtensions.this[]" },
+      ];
+      foreach (var lookup in lookups)
+      {
+         var result = await tool.FindReferencesAsync(lookup, cancellationToken: CT);
+
+         Assert.Equal("this[]", result.Data.Symbol.Name);
+         Assert.Equal("CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)", result.Data.Symbol.ContainingType);
+         Assert.Equal(3, result.Data.TotalReferences);
+         Assert.Equal(expected, result.Data.References);
+      }
+   }
+
+   [Fact]
+   public async Task FindCallers_ExtensionIndexer()
+   {
+      var tool = new FindCallersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.FindCallersAsync(
+         new LookupByPosition { FilePath = _fixture.GetPath("ExtensionIndexer.cs"), Line = 12, Column = 18 },
+         cancellationToken: CT);
+
+      Assert.Equal(3, result.Data.TotalCallers);
+      var callers = result.Data.Callers ?? throw new InvalidOperationException("Compact verbosity lists callers");
+      Assert.Equal(["SumThreeCorners", "SumThreeCorners", "SumThreeCorners"], callers.Select(c => c.CallingSymbol.Name));
+      Assert.Equal(
+         [
+            new CallerLocationInfo { FilePath = "ExtensionIndexer.cs", Line = 20, Column = 25, LineText = "var topLeft = grid[0, 0];" },
+            new CallerLocationInfo { FilePath = "ExtensionIndexer.cs", Line = 21, Column = 26, LineText = "var topRight = grid[0, 1];" },
+            new CallerLocationInfo { FilePath = "ExtensionIndexer.cs", Line = 22, Column = 28, LineText = "var bottomLeft = grid[1, 0];" },
+         ],
+         callers.Select(c => c.Location));
    }
 }
