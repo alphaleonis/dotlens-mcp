@@ -1,0 +1,11 @@
+{
+  "plan": "dotlens-6wmq",
+  "tracker": "nibs",
+  "integration_branch": "deliver/dotlens-6wmq",
+  "current_phase": null,
+  "step": "SELECT",
+  "exit": "complete",
+  "started_at": "2026-11-16T12:12:26Z",
+  "updated_at": "2026-11-16T13:38:38Z",
+  "note": "Plan complete 2026-11-16. Open questions filed as dotlens-u7mq (draft). Follow-ups dotlens-fp1m, 3cdx, mmtc, rok2, 9csy, y3c0 under dotlens-t76f. Integration branch not pushed or merged."
+}
