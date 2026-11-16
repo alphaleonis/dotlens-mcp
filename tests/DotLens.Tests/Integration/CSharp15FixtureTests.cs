@@ -36,7 +36,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -776,17 +776,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
    private const string TapePeek = "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).Peek()";
    private const string ReelPeek = "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Peek()";
-   private const string TapePeekImplementation = "CSharp15TestProject.SpoolExtensions.Peek(CSharp15TestProject.Tape)";
-   private const string ReelPeekImplementation = "CSharp15TestProject.SpoolExtensions.Peek(CSharp15TestProject.Reel)";
    private const string TapeLength = "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).Length";
    private const string ReelLength = "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Length";
 
-   /// <summary>
-   /// The compiler declares a static implementation method in the holder class for each extension method, and a name
-   /// lookup finds those too.
-   /// </summary>
    [Theory]
-   [InlineData("SpoolExtensions.Peek", new[] { TapePeekImplementation, ReelPeekImplementation, TapePeek, ReelPeek })]
+   [InlineData("SpoolExtensions.Peek", new[] { TapePeek, ReelPeek })]
+   [InlineData("CSharp15TestProject.SpoolExtensions.Peek", new[] { TapePeek, ReelPeek })]
    [InlineData("SpoolExtensions.Length", new[] { TapeLength, ReelLength })]
    public async Task LookupByName_AmbiguousExtensionMember_ErrorListsEachCandidate(string name, string[] candidates)
    {
@@ -798,12 +793,78 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    [InlineData("SpoolExtensions.extension(Reel).Peek", null, null, ReelPeek)]
    [InlineData("CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Peek", null, null, ReelPeek)]
    [InlineData("SpoolExtensions.Peek", new string[0], "string", ReelPeek)]
-   [InlineData("CSharp15TestProject.SpoolExtensions.Peek", new[] { "CSharp15TestProject.Tape" }, null, TapePeekImplementation)]
+   [InlineData("CSharp15TestProject.SpoolExtensions.Peek", new string[0], "int", TapePeek)]
    [InlineData("SpoolExtensions.extension(Tape).Length", null, null, TapeLength)]
    [InlineData("SpoolExtensions.extension(Reel).Length", null, null, ReelLength)]
    public async Task LookupByName_AmbiguousExtensionMember_NameSelectsOne(string name, string[]? parameterTypes, string? returnType, string expected)
    {
       await AssertSelectsAsync(new LookupByName { Name = name, ParameterTypes = parameterTypes, ReturnType = returnType }, expected);
+   }
+
+   private const string Whisper = "CSharp15TestProject.TextExtensions.extension(string).Whisper()";
+
+   /// <summary>
+   /// The compiler declares a static implementation method in the holder class for each extension member, with the
+   /// member's name, and a lookup by name finds the member alone.
+   /// </summary>
+   [Theory]
+   [InlineData("Whisper", Whisper)]
+   [InlineData("TextExtensions.Whisper", Whisper)]
+   [InlineData("CSharp15TestProject.TextExtensions.Whisper", Whisper)]
+   [InlineData("Blank", "CSharp15TestProject.TextExtensions.extension(string).Blank()")]
+   public async Task LookupByName_ExtensionMember_FindsOnlyTheExtensionMember(string name, string expected)
+   {
+      await AssertSelectsAsync(new LookupByName { Name = name }, expected);
+   }
+
+   private const string MoneyCentsGetter = "CSharp15TestProject.Money.Cents.get";
+   private const string IsShoutGetter = "CSharp15TestProject.TextExtensions.extension(string).IsShout.get";
+   private const string GridIndexerGetter = "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid).this[int, int].get";
+
+   /// <summary>
+   /// An accessor of an extension member resolves to the block's accessor, never to the implementation method.
+   /// </summary>
+   [Theory]
+   [InlineData("get_Cents", MoneyCentsGetter)]
+   [InlineData("Money.get_Cents", MoneyCentsGetter)]
+   [InlineData("CSharp15TestProject.Money.get_Cents", MoneyCentsGetter)]
+   [InlineData("Badge.set_Label", "CSharp15TestProject.Badge.Label.init")]
+   [InlineData("Badge.get_Slot", "CSharp15TestProject.Badge.this[int].get")]
+   [InlineData("CSharp15TestProject.Badge.get_Slot", "CSharp15TestProject.Badge.this[int].get")]
+   [InlineData("Alarm.add_Rang", "CSharp15TestProject.Alarm.Rang.add")]
+   [InlineData("Siren.remove_Rang", "CSharp15TestProject.Siren.Rang.remove")]
+   [InlineData("get_IsShout", IsShoutGetter)]
+   [InlineData("TextExtensions.get_IsShout", IsShoutGetter)]
+   [InlineData("TextExtensions.extension(string).get_IsShout", IsShoutGetter)]
+   [InlineData("CSharp15TestProject.TextExtensions.get_IsShout", IsShoutGetter)]
+   [InlineData("GridExtensions.get_Item", GridIndexerGetter)]
+   [InlineData("GridExtensions.extension(Grid).get_Item", GridIndexerGetter)]
+   [InlineData("CSharp15TestProject.GridExtensions.get_Item", GridIndexerGetter)]
+   [InlineData("BoardExtensions.set_Item", "CSharp15TestProject.BoardExtensions.extension(CSharp15TestProject.Board).this[int, int].set")]
+   public async Task LookupByName_Accessor_FindsTheAccessor(string name, string expected)
+   {
+      await AssertSelectsAsync(new LookupByName { Name = name }, expected);
+   }
+
+   /// <summary>
+   /// The compiler declares these accessors with no syntax of their own, at the declaration of their event or record.
+   /// </summary>
+   [Theory]
+   [InlineData("Siren.add_Rang", "CSharp15TestProject.Siren.Rang.add", "InheritedMembers.cs", 104, 34)]
+   [InlineData("Siren.remove_Rang", "CSharp15TestProject.Siren.Rang.remove", "InheritedMembers.cs", 104, 34)]
+   [InlineData("Point.get_EqualityContract", "CSharp15TestProject.Point.EqualityContract.get", "PrimaryConstructors.cs", 3, 15)]
+   public async Task LookupByName_GeneratedAccessor_IsSourceSymbolAtItsDeclaration(string name, string expected, string file, int line, int column)
+   {
+      var service = new SymbolLookupService(_fixture.Workspace);
+
+      var result = await service.FindSingleSourceSymbolAsync<ISymbol>(new LookupByName { Name = name }, CT);
+
+      var position = result.Symbol.Locations.Single().GetLineSpan();
+      Assert.Equal(expected, result.Symbol.ToDisplayString());
+      Assert.Equal(_fixture.GetPath(file), result.Document.FilePath);
+      Assert.Null(result.Syntax);
+      Assert.Equal(_fixture.GetPath(file), position.Path);
+      Assert.Equal((line, column), (position.StartLinePosition.Line + 1, position.StartLinePosition.Character + 1));
    }
 
    [Theory]
@@ -842,6 +903,9 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    [InlineData("CSharp15TestProject.Money.op_Explicit", new[] { "CSharp15TestProject.Money.op_Explicit(CSharp15TestProject.Money) returns int", "CSharp15TestProject.Money.op_Explicit(CSharp15TestProject.Money) returns long" })]
    [InlineData("CSharp15TestProject.Money.op_LessThan", new[] { "CSharp15TestProject.Money.op_LessThan(CSharp15TestProject.Money, CSharp15TestProject.Money)", "CSharp15TestProject.Money.op_LessThan(CSharp15TestProject.Money, int)" })]
    [InlineData("CSharp15TestProject.Catalog.get_Item", new[] { "CSharp15TestProject.Catalog.get_Item(int)", "CSharp15TestProject.Catalog.get_Item(string)" })]
+   [InlineData("Catalog.get_Item", new[] { "CSharp15TestProject.Catalog.get_Item(int)", "CSharp15TestProject.Catalog.get_Item(string)" })]
+   [InlineData("add_Rang", new[] { "CSharp15TestProject.Alarm.add_Rang(System.Action)", "CSharp15TestProject.Siren.add_Rang(System.Action)" })]
+   [InlineData("SpoolExtensions.get_Item", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(string)" })]
    public async Task LookupByName_AmbiguousOperatorOrAccessor_ErrorListsEachCandidateByItsName(string name, string[] candidates)
    {
       await AssertAmbiguousAsync(name, candidates);
@@ -874,7 +938,13 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    [InlineData("SpoolExtensions.extension(Tape).this[]")]
    [InlineData("Catalog.this[]")]
    [InlineData("CSharp15TestProject.Catalog.get_Item")]
+   [InlineData("Catalog.get_Item")]
+   [InlineData("get_Item")]
+   [InlineData("add_Rang")]
+   [InlineData("SpoolExtensions.get_Item")]
+   [InlineData("SpoolExtensions.extension(Tape).get_Item")]
    [InlineData("SpoolExtensions.Peek")]
+   [InlineData("CSharp15TestProject.SpoolExtensions.Peek")]
    [InlineData("SpoolExtensions.Length")]
    [InlineData("Box.Get")]
    [InlineData("Mold.Make")]
@@ -1249,6 +1319,267 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(AllExtensionBlocks, result.Data.Items.OfType<ExtensionSymbolResponse>());
       Assert.DoesNotContain(result.Data.Items, s => s is ClassSymbolResponse { Name.Length: 0 });
    }
+
+   /// <summary>
+   /// Each symbol declared in the fixture, as its file, line, column and name, in ordinal order. A record's and a
+   /// delegate's compiler-generated members, a union's Value property, the global namespace and the implementation
+   /// method of each extension member are absent, as <see cref="RoslynHelpers.IsExplicitSourceSymbol"/> says.
+   /// </summary>
+   private static readonly string[] AllExplicitlyDeclaredSymbols =
+   [
+      "AccessorNames.cs:1:11 CSharp15TestProject",
+      "AccessorNames.cs:3:21 Badge",
+      "AccessorNames.cs:5:18 Label",
+      "AccessorNames.cs:8:15 this[]",
+      "AmbiguousMembers.cs:10:20 Labels",
+      "AmbiguousMembers.cs:13:21 SpoolExtensions",
+      "AmbiguousMembers.cs:15:4 extension(Tape)",
+      "AmbiguousMembers.cs:17:18 this[]",
+      "AmbiguousMembers.cs:19:18 Length",
+      "AmbiguousMembers.cs:21:18 Peek",
+      "AmbiguousMembers.cs:24:4 extension(Reel)",
+      "AmbiguousMembers.cs:26:21 this[]",
+      "AmbiguousMembers.cs:28:18 Length",
+      "AmbiguousMembers.cs:30:21 Peek",
+      "AmbiguousMembers.cs:33:4 extension(Tape)",
+      "AmbiguousMembers.cs:35:18 this[]",
+      "AmbiguousMembers.cs:39:21 Catalog",
+      "AmbiguousMembers.cs:3:21 Tape",
+      "AmbiguousMembers.cs:41:15 this[]",
+      "AmbiguousMembers.cs:43:15 this[]",
+      "AmbiguousMembers.cs:46:21 Box",
+      "AmbiguousMembers.cs:48:13 Get",
+      "AmbiguousMembers.cs:50:13 Get",
+      "AmbiguousMembers.cs:53:21 Mold",
+      "AmbiguousMembers.cs:55:22 Make",
+      "AmbiguousMembers.cs:57:21 Make",
+      "AmbiguousMembers.cs:5:17 Cells",
+      "AmbiguousMembers.cs:60:24 Money",
+      "AmbiguousMembers.cs:62:16 Cents",
+      "AmbiguousMembers.cs:81:15 Stamp",
+      "AmbiguousMembers.cs:81:25 Value",
+      "AmbiguousMembers.cs:83:15 Stamp",
+      "AmbiguousMembers.cs:83:28 Value",
+      "AmbiguousMembers.cs:8:21 Reel",
+      "DelegateSignatures.cs:3:21 DelegateSignatures",
+      "DelegateSignatures.cs:5:24 Selector",
+      "DelegateSignatures.cs:7:30 Formatter",
+      "EnumsAndDelegates.cs:11:14 Dispatcher",
+      "EnumsAndDelegates.cs:13:16 Priority",
+      "EnumsAndDelegates.cs:15:7 Low",
+      "EnumsAndDelegates.cs:16:7 High",
+      "EnumsAndDelegates.cs:19:25 Handler",
+      "EnumsAndDelegates.cs:3:13 Channel",
+      "EnumsAndDelegates.cs:5:4 Email",
+      "EnumsAndDelegates.cs:6:4 Sms",
+      "EnumsAndDelegates.cs:9:22 Filter",
+      "ExtensionBlockHeaders.cs:10:29 Empty",
+      "ExtensionBlockHeaders.cs:16:4 extension<TKey, TValue>(IDictionary<TKey, TValue>)",
+      "ExtensionBlockHeaders.cs:20:21 GetOrCreate",
+      "ExtensionBlockHeaders.cs:22:19 Spare",
+      "ExtensionBlockHeaders.cs:3:21 CatalogExtensions",
+      "ExtensionBlockHeaders.cs:8:4 extension(Catalog)",
+      "ExtensionIndexer.cs:10:4 extension(Grid)",
+      "ExtensionIndexer.cs:12:18 this[]",
+      "ExtensionIndexer.cs:16:21 GridUsage",
+      "ExtensionIndexer.cs:18:22 SumThreeCorners",
+      "ExtensionIndexer.cs:3:21 Grid",
+      "ExtensionIndexer.cs:5:18 Cells",
+      "ExtensionIndexer.cs:8:21 GridExtensions",
+      "ExtensionMembers.cs:11:28 Blank",
+      "ExtensionMembers.cs:14:4 extension(int)",
+      "ExtensionMembers.cs:16:19 IsEven",
+      "ExtensionMembers.cs:18:18 Doubled",
+      "ExtensionMembers.cs:21:4 extension<T>(IEnumerable<T>)",
+      "ExtensionMembers.cs:23:19 IsEmpty",
+      "ExtensionMembers.cs:27:21 TextUsage",
+      "ExtensionMembers.cs:29:25 Quiet",
+      "ExtensionMembers.cs:3:21 TextExtensions",
+      "ExtensionMembers.cs:5:4 extension(string)",
+      "ExtensionMembers.cs:7:19 IsShout",
+      "ExtensionMembers.cs:9:21 Whisper",
+      "IndexerUses.cs:12:21 Score",
+      "IndexerUses.cs:14:15 Total",
+      "IndexerUses.cs:18:17 Add",
+      "IndexerUses.cs:21:21 RowUsage",
+      "IndexerUses.cs:23:22 Read",
+      "IndexerUses.cs:33:24 Combine",
+      "IndexerUses.cs:3:21 Row",
+      "IndexerUses.cs:41:24 Find",
+      "IndexerUses.cs:5:15 Length",
+      "IndexerUses.cs:7:15 this[]",
+      "IndexerUses.cs:9:15 Slice",
+      "IndexerWrites.cs:100:15 Total",
+      "IndexerWrites.cs:102:15 Reset",
+      "IndexerWrites.cs:111:24 Move",
+      "IndexerWrites.cs:113:23 Echo",
+      "IndexerWrites.cs:13:15 Count",
+      "IndexerWrites.cs:16:21 RefSlots",
+      "IndexerWrites.cs:18:27 _values",
+      "IndexerWrites.cs:20:19 this[]",
+      "IndexerWrites.cs:23:21 Shelf",
+      "IndexerWrites.cs:25:29 _rows",
+      "IndexerWrites.cs:27:17 this[]",
+      "IndexerWrites.cs:29:17 Front",
+      "IndexerWrites.cs:32:21 Board",
+      "IndexerWrites.cs:34:18 Cells",
+      "IndexerWrites.cs:37:21 BoardExtensions",
+      "IndexerWrites.cs:39:4 extension(Board)",
+      "IndexerWrites.cs:3:21 Slots",
+      "IndexerWrites.cs:41:18 this[]",
+      "IndexerWrites.cs:49:21 IndexerWriteUsage",
+      "IndexerWrites.cs:51:23 WriteSlots",
+      "IndexerWrites.cs:5:28 _values",
+      "IndexerWrites.cs:70:24 FillShelf",
+      "IndexerWrites.cs:72:22 PassRefs",
+      "IndexerWrites.cs:7:16 this[]",
+      "IndexerWrites.cs:80:22 WriteBoard",
+      "IndexerWrites.cs:91:24 Fill",
+      "IndexerWrites.cs:93:24 Bump",
+      "IndexerWrites.cs:95:23 Peek",
+      "IndexerWrites.cs:98:21 Ledger",
+      "InheritedMembers.cs:102:14 Siren",
+      "InheritedMembers.cs:104:34 Rang",
+      "InheritedMembers.cs:106:16 Ring",
+      "InheritedMembers.cs:11:15 Sides",
+      "InheritedMembers.cs:13:25 Unit",
+      "InheritedMembers.cs:15:13 Pick",
+      "InheritedMembers.cs:17:13 Pick",
+      "InheritedMembers.cs:19:16 Secret",
+      "InheritedMembers.cs:22:14 Rhombus",
+      "InheritedMembers.cs:24:27 Area",
+      "InheritedMembers.cs:26:22 Scale",
+      "InheritedMembers.cs:28:22 Sides",
+      "InheritedMembers.cs:30:17 Pick",
+      "InheritedMembers.cs:33:14 Gauge",
+      "InheritedMembers.cs:35:21 Max",
+      "InheritedMembers.cs:37:22 Count",
+      "InheritedMembers.cs:39:23 Reset",
+      "InheritedMembers.cs:3:14 Figure",
+      "InheritedMembers.cs:41:17 Dial",
+      "InheritedMembers.cs:43:24 Tools",
+      "InheritedMembers.cs:45:16 Turn",
+      "InheritedMembers.cs:47:16 Push",
+      "InheritedMembers.cs:49:15 Level",
+      "InheritedMembers.cs:51:15 this[]",
+      "InheritedMembers.cs:53:15 Mode",
+      "InheritedMembers.cs:55:16 Store",
+      "InheritedMembers.cs:57:16 Pair",
+      "InheritedMembers.cs:59:16 Many",
+      "InheritedMembers.cs:5:26 Area",
+      "InheritedMembers.cs:61:16 Shift",
+      "InheritedMembers.cs:64:14 Barometer",
+      "InheritedMembers.cs:66:16 Turn",
+      "InheritedMembers.cs:68:16 Push",
+      "InheritedMembers.cs:70:19 Level",
+      "InheritedMembers.cs:72:19 this[]",
+      "InheritedMembers.cs:74:20 Mode",
+      "InheritedMembers.cs:76:20 Store",
+      "InheritedMembers.cs:78:20 Pair",
+      "InheritedMembers.cs:7:18 Scale",
+      "InheritedMembers.cs:80:20 Many",
+      "InheritedMembers.cs:83:14 Middle",
+      "InheritedMembers.cs:85:27 Shift",
+      "InheritedMembers.cs:88:14 Bottom",
+      "InheritedMembers.cs:90:15 Ticket",
+      "InheritedMembers.cs:90:26 Id",
+      "InheritedMembers.cs:92:27 ToString",
+      "InheritedMembers.cs:95:15 VipTicket",
+      "InheritedMembers.cs:95:37 Seat",
+      "InheritedMembers.cs:97:14 Alarm",
+      "InheritedMembers.cs:99:33 Rang",
+      "InheritedMembers.cs:9:18 Scale",
+      "LabeledLoops.cs:23:22 CountRowsWithoutZero",
+      "LabeledLoops.cs:3:21 LabeledLoops",
+      "LabeledLoops.cs:41:22 FindNegativeRow",
+      "LabeledLoops.cs:5:22 CountRowsBeforeNegative",
+      "MultiLineSignatures.cs:17:16 _disposals",
+      "MultiLineSignatures.cs:19:32 Disposed",
+      "MultiLineSignatures.cs:30:15 Count",
+      "MultiLineSignatures.cs:33:21 Group",
+      "MultiLineSignatures.cs:3:18 ILedger",
+      "MultiLineSignatures.cs:41:18 this[]",
+      "MultiLineSignatures.cs:44:16 Dispose",
+      "MultiLineSignatures.cs:51:25 Folder",
+      "MultiLineSignatures.cs:57:21 LedgerExtensions",
+      "MultiLineSignatures.cs:59:4 extension<TKey, TValue>(Ledger<TKey, TValue>)",
+      "MultiLineSignatures.cs:5:8 Count",
+      "MultiLineSignatures.cs:63:19 IsEmpty",
+      "MultiLineSignatures.cs:8:14 Ledger",
+      "PrimaryConstructors.cs:12:22 Pair",
+      "PrimaryConstructors.cs:12:31 Left",
+      "PrimaryConstructors.cs:12:41 Right",
+      "PrimaryConstructors.cs:14:14 Counter",
+      "PrimaryConstructors.cs:16:14 Tally",
+      "PrimaryConstructors.cs:18:15 Initial",
+      "PrimaryConstructors.cs:21:18 IMeasurable",
+      "PrimaryConstructors.cs:23:8 Measure",
+      "PrimaryConstructors.cs:3:15 Point",
+      "PrimaryConstructors.cs:3:25 X",
+      "PrimaryConstructors.cs:3:32 Y",
+      "PrimaryConstructors.cs:5:14 Logger",
+      "PrimaryConstructors.cs:7:15 Size",
+      "PrimaryConstructors.cs:9:15 Area",
+      "RefReceiverExtensions.cs:10:4 extension(Meter)",
+      "RefReceiverExtensions.cs:12:18 Copy",
+      "RefReceiverExtensions.cs:15:4 extension(ref Meter)",
+      "RefReceiverExtensions.cs:17:19 Advance",
+      "RefReceiverExtensions.cs:20:4 extension(in Meter)",
+      "RefReceiverExtensions.cs:22:18 Peek",
+      "RefReceiverExtensions.cs:25:4 extension(ref readonly Meter)",
+      "RefReceiverExtensions.cs:27:18 Look",
+      "RefReceiverExtensions.cs:30:4 extension(scoped ref Meter)",
+      "RefReceiverExtensions.cs:32:19 Reset",
+      "RefReceiverExtensions.cs:35:4 extension(scoped Span<int>)",
+      "RefReceiverExtensions.cs:37:18 Size",
+      "RefReceiverExtensions.cs:3:15 Meter",
+      "RefReceiverExtensions.cs:40:4 extension<T>(ref T)",
+      "RefReceiverExtensions.cs:42:19 Clear",
+      "RefReceiverExtensions.cs:5:15 Reading",
+      "RefReceiverExtensions.cs:8:21 MeterExtensions",
+      "Unions.cs:11:25 Area",
+      "Unions.cs:3:15 Circle",
+      "Unions.cs:3:29 Radius",
+      "Unions.cs:5:15 Square",
+      "Unions.cs:5:29 Side",
+      "Unions.cs:7:14 Shape",
+      "Unions.cs:9:21 ShapeMath",
+   ];
+
+   [Fact]
+   public async Task SearchSymbols_Wildcard_ListsOnlyExplicitlyDeclaredSymbols()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllExplicitlyDeclaredSymbols, result.Data.Items.Select(FormatPositionAndName).Order(StringComparer.Ordinal));
+   }
+
+   /// <summary>
+   /// find_symbols also lists constructors, which search_symbols does not.
+   /// </summary>
+   [Fact]
+   public async Task SearchSymbols_Wildcard_ListsWhatFindSymbolsListsExceptConstructors()
+   {
+      var search = new SearchSymbolsTool(_fixture.Workspace);
+      var find = new FindSymbolsTool(_fixture.Workspace);
+
+      var searched = await search.SearchSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+      var found = await find.FindSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+
+      Assert.False(searched.Data.HasMore);
+      Assert.False(found.Data.HasMore);
+      Assert.Equal(
+         found.Data.Items.Where(s => s is not ConstructorSymbolResponse).Select(FormatPositionAndName).Order(StringComparer.Ordinal),
+         searched.Data.Items.Select(FormatPositionAndName).Order(StringComparer.Ordinal));
+   }
+
+   private static string FormatPositionAndName(SymbolResponse symbol) =>
+      symbol.Location is { } location
+         ? $"{location.FilePath}:{location.Line}:{location.Column} {symbol.Name}"
+         : throw new InvalidOperationException($"{symbol.Name} has no location");
 
    [Fact]
    public async Task ContainingMember_InsideExtensionBlock_ReturnsBlock()
@@ -1659,6 +1990,23 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(
          "extension(Grid) is an extension block, which has no name to rename. Rename its receiver parameter or its members instead.",
          error.Message);
+   }
+
+   [Theory]
+   [InlineData("CSharp15TestProject.Siren.add_Rang", "add_Rang is an accessor of Rang, which takes its name from it. Rename Rang instead.")]
+   [InlineData("CSharp15TestProject.Money.get_Cents", "get_Cents is an accessor of Cents, which takes its name from it. Rename Cents instead.")]
+   [InlineData("CSharp15TestProject.Badge.set_Label", "set_Label is an accessor of Label, which takes its name from it. Rename Label instead.")]
+   public async Task RenameSymbol_Accessor_Refuses(string name, string expectedMessage)
+   {
+      // The refusal comes before any change, and preview never writes, so the shared fixture stays untouched.
+      var workspace = _fixture.Workspace as IWorkspace ?? throw new InvalidOperationException("The fixture workspace is writable");
+      var tool = new RenameSymbolTool(workspace, new SymbolLookupService(workspace));
+
+      var error = await Assert.ThrowsAsync<ToolException>(
+         () => tool.RenameSymbolAsync(new LookupByName { Name = name }, "Other", preview: true, cancellationToken: CT));
+
+      Assert.Equal(ErrorCodes.NotSupported, error.Code);
+      Assert.Equal(expectedMessage, error.Message);
    }
 
    [Theory]

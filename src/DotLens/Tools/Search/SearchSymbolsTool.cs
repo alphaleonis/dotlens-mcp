@@ -240,9 +240,7 @@ public class SearchSymbolsTool
                   continue;
             }
 
-            // Only yield symbols with source locations
-            var location = symbol.Locations.FirstOrDefault(loc => loc.IsInSource);
-            if (location == null)
+            if (!RoslynHelpers.IsExplicitSourceSymbol(symbol))
                continue;
 
             yield return symbol;

@@ -52,6 +52,17 @@ public class RenameSymbolTool
             $"{RoslynHelpers.GetExtensionBlockName(extension)} is an extension block, which has no name to rename. Rename its receiver parameter or its members instead.");
       }
 
+      if (symbol is IMethodSymbol
+         {
+            MethodKind: MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove,
+            AssociatedSymbol: { } owner,
+         } accessor)
+      {
+         throw new ToolException(
+            ErrorCodes.NotSupported,
+            $"{accessor.Name} is an accessor of {RoslynHelpers.GetName(owner)}, which takes its name from it. Rename {RoslynHelpers.GetName(owner)} instead.");
+      }
+
       // Validate new name
       if (string.IsNullOrWhiteSpace(newName))
       {

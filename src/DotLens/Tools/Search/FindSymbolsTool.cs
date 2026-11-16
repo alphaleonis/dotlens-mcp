@@ -239,12 +239,7 @@ public class FindSymbolsTool
 
    private static bool MatchesAllFilters(ISymbol symbol, FilterCriteria criteria, GlobMatcher namespaceMatcher)
    {
-      // Skip compiler-generated and non-source symbols
-      if (symbol.IsImplicitlyDeclared)
-         return false;
-
-      var sourceLocation = symbol.Locations.FirstOrDefault(loc => loc.IsInSource);
-      if (sourceLocation == null)
+      if (!RoslynHelpers.IsExplicitSourceSymbol(symbol))
          return false;
 
       // Filter by kind

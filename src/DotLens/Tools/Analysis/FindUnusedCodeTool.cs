@@ -170,7 +170,7 @@ public class FindUnusedCodeTool
          if (unusedSymbols.Count >= maxResults)
             break;
 
-         if (typeSymbol.IsImplicitlyDeclared || !typeSymbol.Locations.Any(loc => loc.IsInSource))
+         if (!RoslynHelpers.IsExplicitSourceSymbol(typeSymbol))
             continue;
 
          // An extension block only groups members, so AnalyzeMembersAsync reports its unused members instead.
@@ -228,7 +228,7 @@ public class FindUnusedCodeTool
          if (member is not (IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol))
             continue;
 
-         if (member.IsImplicitlyDeclared || !member.Locations.Any(loc => loc.IsInSource))
+         if (!RoslynHelpers.IsExplicitSourceSymbol(member))
             continue;
 
          // Filter by specific kind if requested
@@ -297,12 +297,7 @@ public class FindUnusedCodeTool
             if (unusedSymbols.Count >= maxResults)
                break;
 
-            // Skip implicitly declared constructors (compiler-generated)
-            if (ctor.IsImplicitlyDeclared)
-               continue;
-
-            // Must have source location
-            if (!ctor.Locations.Any(loc => loc.IsInSource))
+            if (!RoslynHelpers.IsExplicitSourceSymbol(ctor))
                continue;
 
             // Filter by kind if specified (this handles Constructor vs StaticConstructor)

@@ -1019,6 +1019,37 @@ public static class RoslynHelpers
       || string.Equals(GetFullyQualifiedExtensionBlockName(extension), name, StringComparison.Ordinal);
 
    /// <summary>
+   /// Returns whether source code declares the symbol itself, which is the rule for the symbols that tools list.
+   /// </summary>
+   /// <remarks>
+   /// The symbols that the compiler declares do not count: the global namespace, the generated members of a record,
+   /// delegate or union, a default constructor, and the implementation method of each extension member. A record's
+   /// positional property counts, because its parameter declares it.
+   /// </remarks>
+   public static bool IsExplicitSourceSymbol(ISymbol symbol) =>
+      !symbol.IsImplicitlyDeclared && symbol.Locations.Any(location => location.IsInSource);
+
+   /// <summary>
+   /// Returns whether the symbol is the static method that the compiler declares in a holder class to implement a member
+   /// of one of the class's extension blocks.
+   /// </summary>
+   /// <remarks>
+   /// The method has the member's name, so a lookup by name skips it and finds the member.
+   /// </remarks>
+   public static bool IsExtensionImplementation(ISymbol symbol)
+   {
+      if (symbol is not IMethodSymbol { IsStatic: true, ContainingType: { } holder } method)
+         return false;
+
+      var definition = method.OriginalDefinition;
+      return holder.GetTypeMembers()
+         .Where(type => type.IsExtension)
+         .SelectMany(block => block.GetMembers())
+         .OfType<IMethodSymbol>()
+         .Any(member => SymbolEqualityComparer.Default.Equals(member.AssociatedExtensionImplementation?.OriginalDefinition, definition));
+   }
+
+   /// <summary>
    /// Returns the name that tools show and search for a symbol: the header of an extension block, and
    /// <see cref="ISymbol.Name"/> for any other symbol.
    /// </summary>

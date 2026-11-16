@@ -453,13 +453,47 @@ public class SymbolLookupService
          _ => SymbolFilter.All
       };
 
-      var name = ParseSegment(simpleName).Name;
-      return compilation.GetSymbolsWithName(
-            candidate => string.Equals(candidate, name, StringComparison.Ordinal),
-            filter)
+      return FindSourceSymbolsByName(compilation, ParseSegment(simpleName).Name, filter)
          .Where(symbol => SegmentMatches(symbol, simpleName))
          .OfType<TSymbol>();
    }
+
+   private static readonly string[] AccessorPrefixes = ["get_", "set_", "add_", "remove_"];
+
+   /// <summary>
+   /// Returns the source symbols in the compilation with the name, other than extension implementation methods.
+   /// </summary>
+   /// <remarks>
+   /// <see cref="Compilation.GetSymbolsWithName(Func{string, bool}, SymbolFilter, CancellationToken)"/> does not return
+   /// accessors. So for an accessor's name, such as <c>get_Item</c>, this also searches for the members that can own
+   /// the accessor: the property or event with the name after the prefix, and every indexer, because an indexer's
+   /// accessors take its metadata name.
+   /// </remarks>
+   private static IEnumerable<ISymbol> FindSourceSymbolsByName(Compilation compilation, string name, SymbolFilter filter)
+   {
+      var symbols = compilation.GetSymbolsWithName(candidate => string.Equals(candidate, name, StringComparison.Ordinal), filter);
+      var prefix = AccessorPrefixes.FirstOrDefault(prefix => name.Length > prefix.Length && name.StartsWith(prefix, StringComparison.Ordinal));
+      if (prefix is not null && filter.HasFlag(SymbolFilter.Member))
+      {
+         var ownerName = name[prefix.Length..];
+         var accessors = compilation.GetSymbolsWithName(
+               candidate => string.Equals(candidate, ownerName, StringComparison.Ordinal)
+                  || string.Equals(candidate, WellKnownMemberNames.Indexer, StringComparison.Ordinal),
+               SymbolFilter.Member)
+            .SelectMany(GetAccessors)
+            .Where(accessor => string.Equals(accessor.Name, name, StringComparison.Ordinal));
+         symbols = symbols.Concat(accessors);
+      }
+
+      return symbols.Where(symbol => !RoslynHelpers.IsExtensionImplementation(symbol));
+   }
+
+   private static IEnumerable<IMethodSymbol> GetAccessors(ISymbol member) => member switch
+   {
+      IPropertySymbol property => new[] { property.GetMethod, property.SetMethod }.OfType<IMethodSymbol>(),
+      IEventSymbol @event => new[] { @event.AddMethod, @event.RemoveMethod, @event.RaiseMethod }.OfType<IMethodSymbol>(),
+      _ => []
+   };
 
    /// <summary>
    /// Resolve a dotted name progressively through namespaces and types.
@@ -480,9 +514,7 @@ public class SymbolLookupService
          var simpleName = ParseSegment(segments[^1]).Name;
          var containerSegments = segments[..^1];
 
-         foreach (var symbol in compilation.GetSymbolsWithName(
-            name => string.Equals(name, simpleName, StringComparison.Ordinal),
-            SymbolFilter.All))
+         foreach (var symbol in FindSourceSymbolsByName(compilation, simpleName, SymbolFilter.All))
          {
             if (SegmentMatches(symbol, segments[^1]) && MatchesContainer(symbol, containerSegments))
             {
@@ -534,13 +566,21 @@ public class SymbolLookupService
       }
    }
 
+   /// <remarks>
+   /// The segment also matches the members of each extension block in a type, as <see cref="MatchesContainer"/> does.
+   /// </remarks>
    private static IEnumerable<ISymbol> GetMembersMatching(INamespaceOrTypeSymbol container, string segment)
    {
-      var members = container.GetMembers(ParseSegment(segment).Name).Where(member => SegmentMatches(member, segment));
-      var extensionBlocks = container is INamedTypeSymbol type
-         ? type.GetTypeMembers().Where(member => member.IsExtension && RoslynHelpers.IsExtensionBlockNamed(member, segment))
-         : [];
-      return members.Concat(extensionBlocks);
+      var name = ParseSegment(segment).Name;
+      if (container is not INamedTypeSymbol type)
+         return container.GetMembers(name).Where(member => SegmentMatches(member, segment));
+
+      var blocks = type.GetTypeMembers().Where(member => member.IsExtension).ToList();
+      var members = type.GetMembers(name)
+         .Where(member => !RoslynHelpers.IsExtensionImplementation(member))
+         .Concat(blocks.SelectMany(block => block.GetMembers(name)))
+         .Where(member => SegmentMatches(member, segment));
+      return members.Concat(blocks.Where(block => RoslynHelpers.IsExtensionBlockNamed(block, segment)));
    }
 
    /// <summary>
@@ -685,22 +725,18 @@ public class SymbolLookupService
       Solution solution,
       CancellationToken cancellationToken) where TSymbol : ISymbol
    {
-      // Check if symbol is from source
+      // A compiler-generated accessor, such as one of a field-like event, has a source location but no syntax.
       var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
+      var syntaxTree = syntaxRef?.SyntaxTree ?? symbol.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree;
 
-      if (syntaxRef != null)
+      if (syntaxTree is not null && solution.GetDocument(syntaxTree) is { } document)
       {
-         var document = solution.GetDocument(syntaxRef.SyntaxTree);
-         if (document != null)
+         return new SourceSymbolResult<TSymbol>
          {
-            var syntax = await syntaxRef.GetSyntaxAsync(cancellationToken);
-            return new SourceSymbolResult<TSymbol>
-            {
-               Symbol = symbol,
-               Document = document,
-               Syntax = syntax
-            };
-         }
+            Symbol = symbol,
+            Document = document,
+            Syntax = syntaxRef is null ? null : await syntaxRef.GetSyntaxAsync(cancellationToken)
+         };
       }
 
       // Metadata symbol
