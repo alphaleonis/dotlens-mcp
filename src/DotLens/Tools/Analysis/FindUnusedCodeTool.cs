@@ -173,6 +173,10 @@ public class FindUnusedCodeTool
          if (typeSymbol.IsImplicitlyDeclared || !typeSymbol.Locations.Any(loc => loc.IsInSource))
             continue;
 
+         // An extension block only groups members, so AnalyzeMembersAsync reports its unused members instead.
+         if (typeSymbol.IsExtension)
+            continue;
+
          // Filter by specific kind if requested
          if (kindFilter != null && !SymbolFilterHelper.MatchesKind(typeSymbol, kindFilter.Value))
             continue;

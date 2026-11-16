@@ -753,6 +753,20 @@ public static class RoslynHelpers
             TypeParameters = typeParameters,
             Declaration = declaration
          },
+         INamedTypeSymbol { TypeKind: Microsoft.CodeAnalysis.TypeKind.Extension } extension => new ExtensionSymbolResponse
+         {
+            Name = GetExtensionBlockName(extension),
+            Location = location,
+            Locations = locations,
+            ContainingType = containingType,
+            Accessibility = accessibility,
+            Modifiers = modifiers,
+            FullyQualifiedName = fqn,
+            ContainingNamespace = containingNs,
+            Documentation = documentation,
+            TypeParameters = typeParameters,
+            Declaration = declaration
+         },
          // Fallback for other named types (e.g., TypeKind.Error)
          INamedTypeSymbol => new ClassSymbolResponse
          {
@@ -872,6 +886,19 @@ public static class RoslynHelpers
             Declaration = declaration
          }
       };
+   }
+
+   /// <summary>
+   /// Returns the header of an extension block without the receiver's name, such as <c>extension(scoped ref Meter)</c>.
+   /// </summary>
+   private static string GetExtensionBlockName(INamedTypeSymbol extension)
+   {
+      // Roslyn's display keeps the receiver's ref and scoped modifiers but always prefixes the containing type.
+      var display = extension.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+      var containerPrefix = extension.ContainingType is { } container
+         ? container.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) + "."
+         : "";
+      return display.StartsWith(containerPrefix, StringComparison.Ordinal) ? display[containerPrefix.Length..] : display;
    }
 
    /// <summary>

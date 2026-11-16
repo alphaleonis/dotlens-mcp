@@ -12,6 +12,7 @@ namespace DotLens.Tools.Shared;
 [JsonDerivedType(typeof(StructSymbolResponse), "struct")]
 [JsonDerivedType(typeof(EnumSymbolResponse), "enum")]
 [JsonDerivedType(typeof(DelegateSymbolResponse), "delegate")]
+[JsonDerivedType(typeof(ExtensionSymbolResponse), "extension")]
 [JsonDerivedType(typeof(MethodSymbolResponse), "method")]
 [JsonDerivedType(typeof(ConstructorSymbolResponse), "constructor")]
 [JsonDerivedType(typeof(PropertySymbolResponse), "property")]
@@ -56,6 +57,12 @@ public record InterfaceSymbolResponse : SymbolResponse;
 public record StructSymbolResponse : SymbolResponse;
 public record EnumSymbolResponse : SymbolResponse;
 public record DelegateSymbolResponse : SymbolResponse;
+
+/// <summary>
+/// A C# <c>extension(...)</c> block. Its <see cref="SymbolResponse.Name"/> is the block header without the
+/// receiver's name, such as <c>extension(Grid)</c>, because the language gives the block no name.
+/// </summary>
+public record ExtensionSymbolResponse : SymbolResponse;
 
 // Callable symbols (methods and constructors)
 

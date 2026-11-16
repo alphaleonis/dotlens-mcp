@@ -1,3 +1,4 @@
+using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Analysis;
 using DotLens.Tools.Intelligence;
@@ -10,7 +11,7 @@ namespace DotLens.Tests.Integration;
 
 /// <summary>
 /// Covers DotLens tools on a <c>net11.0</c> project that uses C# 15 unions, labeled <c>break</c> and
-/// <c>continue</c>, and an extension indexer, plus type declarations with primary constructors.
+/// <c>continue</c>, and extension blocks, plus type declarations with primary constructors.
 /// </summary>
 public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 {
@@ -33,7 +34,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "PrimaryConstructors.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -257,4 +258,242 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          ],
          callers.Select(c => c.Location));
    }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionBlockWithUsedMembers_NotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "GridExtensions", 8),
+            (typeof(ClassSymbolResponse), "GridUsage", 16),
+            (typeof(MethodSymbolResponse), "SumThreeCorners", 18),
+            (typeof(ConstructorSymbolResponse), ".ctor", 3),
+         ],
+         UnusedSymbolsIn(result.Data, "ExtensionIndexer.cs"));
+      Assert.DoesNotContain(result.Data.UnusedSymbols, s => s.Name.Length == 0);
+      Assert.False(result.Data.CountByKind.ContainsKey("Extension"));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_ExtensionBlockWithUnusedMembers_ReportsMembersOnly()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "TextExtensions", 3),
+            (typeof(ClassSymbolResponse), "TextUsage", 27),
+            (typeof(PropertySymbolResponse), "IsEven", 16),
+            (typeof(MethodSymbolResponse), "Doubled", 18),
+            (typeof(MethodSymbolResponse), "Quiet", 29),
+         ],
+         UnusedSymbolsIn(result.Data, "ExtensionMembers.cs"));
+   }
+
+   private static readonly ExtensionSymbolResponse GridExtensionBlock = new()
+   {
+      Name = "extension(Grid)",
+      Location = new SymbolLocation { FilePath = "ExtensionIndexer.cs", Line = 10, Column = 4 },
+      ContainingType = "CSharp15TestProject.GridExtensions",
+      Accessibility = AccessibilityDto.Public,
+      Modifiers = SymbolModifiers.Sealed,
+   };
+
+   private static readonly ExtensionSymbolResponse[] RefReceiverExtensionBlocks =
+   [
+      GridExtensionBlock with
+      {
+         Name = "extension(Meter)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 10, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(ref Meter)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 15, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(in Meter)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 20, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(ref readonly Meter)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 25, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(scoped ref Meter)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 30, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(scoped Span<int>)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 35, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension<T>(ref T)",
+         Location = new SymbolLocation { FilePath = "RefReceiverExtensions.cs", Line = 40, Column = 4 },
+         ContainingType = "CSharp15TestProject.MeterExtensions",
+      },
+   ];
+
+   private static readonly ExtensionSymbolResponse[] AllExtensionBlocks =
+   [
+      GridExtensionBlock,
+      GridExtensionBlock with
+      {
+         Name = "extension(string)",
+         Location = new SymbolLocation { FilePath = "ExtensionMembers.cs", Line = 5, Column = 4 },
+         ContainingType = "CSharp15TestProject.TextExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension(int)",
+         Location = new SymbolLocation { FilePath = "ExtensionMembers.cs", Line = 14, Column = 4 },
+         ContainingType = "CSharp15TestProject.TextExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension<T>(IEnumerable<T>)",
+         Location = new SymbolLocation { FilePath = "ExtensionMembers.cs", Line = 21, Column = 4 },
+         ContainingType = "CSharp15TestProject.TextExtensions",
+      },
+      .. RefReceiverExtensionBlocks,
+   ];
+
+   private LookupByPosition GridExtensionBlockPosition =>
+      new() { FilePath = _fixture.GetPath("ExtensionIndexer.cs"), Line = 10, Column = 4 };
+
+   [Fact]
+   public async Task SymbolInfo_ExtensionBlock_HasExtensionKindAndName()
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(GridExtensionBlockPosition, cancellationToken: CT);
+
+      Assert.Equal(
+         GridExtensionBlock with
+         {
+            FullyQualifiedName = "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)",
+            ContainingNamespace = "CSharp15TestProject",
+            Declaration = "public GridExtensions.extension(Grid)",
+         },
+         result.Data);
+   }
+
+   [Fact]
+   public async Task SearchSymbols_ExtensionBlocks_HaveExtensionKindAndName()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllExtensionBlocks, result.Data.Items.OfType<ExtensionSymbolResponse>());
+      Assert.DoesNotContain(result.Data.Items, s => s is ClassSymbolResponse { Name.Length: 0 });
+   }
+
+   [Fact]
+   public async Task FindSymbols_ExtensionBlocks_HaveExtensionKindAndName()
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.FindSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllExtensionBlocks, result.Data.Items.OfType<ExtensionSymbolResponse>());
+      Assert.DoesNotContain(result.Data.Items, s => s is ClassSymbolResponse { Name.Length: 0 });
+   }
+
+   [Fact]
+   public async Task ContainingMember_InsideExtensionBlock_ReturnsBlock()
+   {
+      var tool = new GetContainingMemberTool(_fixture.Workspace);
+
+      // Line 11 holds the block's opening brace, outside any member.
+      var result = await tool.GetContainingMemberAsync(
+         _fixture.GetPath("ExtensionIndexer.cs"), 11, 4, includeHierarchy: true, cancellationToken: CT);
+
+      Assert.Equal(GridExtensionBlock, result.Data.Member);
+      var hierarchy = result.Data.Hierarchy ?? throw new InvalidOperationException("includeHierarchy lists the hierarchy");
+      Assert.Equal(
+         [(typeof(ExtensionSymbolResponse), "extension(Grid)"), (typeof(ClassSymbolResponse), "GridExtensions"), (typeof(NamespaceSymbolResponse), "CSharp15TestProject")],
+         hierarchy.Select(s => (s.GetType(), s.Name)));
+   }
+
+   [Fact]
+   public async Task FileOverview_ListsExtensionBlocksWithExtensionKind()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("ExtensionMembers.cs"), ct: CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Compact verbosity lists types");
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "TextExtensions"),
+            (typeof(ExtensionSymbolResponse), "extension(string)"),
+            (typeof(ExtensionSymbolResponse), "extension(int)"),
+            (typeof(ExtensionSymbolResponse), "extension<T>(IEnumerable<T>)"),
+            (typeof(ClassSymbolResponse), "TextUsage"),
+         ],
+         types.Select(t => (t.GetType(), t.Name)));
+      Assert.Equal(AllExtensionBlocks.Where(b => b.Location?.FilePath == "ExtensionMembers.cs"), types.OfType<ExtensionSymbolResponse>());
+   }
+
+   [Fact]
+   public async Task FileOverview_ExtensionBlockNames_IncludeReceiverModifiers()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("RefReceiverExtensions.cs"), ct: CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Compact verbosity lists types");
+      Assert.Equal(RefReceiverExtensionBlocks, types.OfType<ExtensionSymbolResponse>());
+   }
+
+   [Fact]
+   public async Task GoToDefinition_ExtensionBlock_HasExtensionKindAndName()
+   {
+      var tool = new GoToDefinitionTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GoToDefinitionAsync(GridExtensionBlockPosition, cancellationToken: CT);
+
+      Assert.Equal(GridExtensionBlock, result.Data.Symbol);
+      Assert.Equal(
+         [new SourceSpan { FilePath = "ExtensionIndexer.cs", StartLine = 10, StartColumn = 4, EndLine = 10, EndColumn = 13 }],
+         result.Data.Definitions);
+   }
+
+   [Fact]
+   public async Task FindReferences_ExtensionBlock_HasExtensionKindAndName()
+   {
+      var tool = new FindReferencesTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.FindReferencesAsync(GridExtensionBlockPosition, cancellationToken: CT);
+
+      Assert.Equal(GridExtensionBlock, result.Data.Symbol);
+      Assert.Equal(0, result.Data.TotalReferences);
+      Assert.Empty(result.Data.References);
+   }
+
+   private static List<(Type Kind, string Name, int Line)> UnusedSymbolsIn(FindUnusedCodeResponse data, string fileName) =>
+      data.UnusedSymbols
+         .Where(s => s.Location?.FilePath == fileName)
+         .Select(s => (s.GetType(), s.Name, s.Location?.Line ?? 0))
+         .ToList();
 }
