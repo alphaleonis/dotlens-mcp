@@ -269,12 +269,14 @@ This architecture allows the worker process to be killed and restarted to releas
 
 ## Requirements
 
-- [.NET 10.0](https://dotnet.microsoft.com/download) SDK or Runtime
+- [.NET 10.0 or later](https://dotnet.microsoft.com/download) SDK or Runtime
 - An MCP-compatible AI agent (e.g., [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Cursor](https://cursor.sh/), [VS Code + Copilot](https://code.visualstudio.com/))
 
 ## Contributing
 
 Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/alphaleonis/dotlens-mcp).
+
+Building from source needs the .NET 11 SDK, which `global.json` pins.
 
 ```bash
 # Development workflow

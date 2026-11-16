@@ -48,6 +48,7 @@ public class AnalyzerDiagnosticsTests : IAsyncLifetime
       var workspaceManager = new WorkspaceManager(NullLogger<WorkspaceManager>.Instance, options);
       _workspaceManager = workspaceManager;
 
+      await TestFixtureRestore.EnsureRestoredAsync(_testFixturesSolutionPath);
       var loadResult = await workspaceManager.LoadSolutionAsync(_testFixturesSolutionPath);
       var json = JsonNode.Parse(JsonSerializer.Serialize(loadResult, loadResult.GetType(), TestJsonOptions.CamelCase))!;
       Assert.NotNull(json["data"]);  // Success indicated by presence of data

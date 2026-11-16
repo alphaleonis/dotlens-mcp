@@ -1,5 +1,5 @@
 [
-  { "PackageId": "Microsoft.Bcl.AsyncInterfaces", "PackageVersion": "10.0.1", "License": "MIT", "Copyright": "© Microsoft Corporation. All rights reserved.", "PackageProjectUrl": "https://dot.net/" },
+  { "PackageId": "Microsoft.Bcl.AsyncInterfaces", "PackageVersion": "10.0.10", "License": "MIT", "Copyright": "© Microsoft Corporation. All rights reserved.", "PackageProjectUrl": "https://dot.net/" },
   { "PackageId": "Microsoft.Build.Locator", "PackageVersion": "1.10.2", "License": "MIT", "Copyright": "© Microsoft Corporation. All rights reserved.", "PackageProjectUrl": "https://github.com/microsoft/MSBuildLocator" },
   { "PackageId": "Microsoft.IO.Redist", "PackageVersion": "6.1.0", "License": "MIT", "Copyright": "© Microsoft Corporation. All rights reserved.", "PackageProjectUrl": "https://github.com/dotnet/maintenance-packages" },
   { "PackageId": "System.Buffers", "PackageVersion": "4.6.1", "License": "MIT", "Copyright": "© Microsoft Corporation. All rights reserved.", "PackageProjectUrl": "https://github.com/dotnet/maintenance-packages" },

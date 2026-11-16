@@ -104,7 +104,7 @@ public class GetFileOutlineTool
       {
          _builder.Append(line.ToString(CultureInfo.InvariantCulture).PadLeft(_lineNumberWidth));
          _builder.Append(": ");
-         _builder.Append(new string(' ', _indentLevel * _indentSpaces));
+         _builder.Append(' ', _indentLevel * _indentSpaces);
          _builder.AppendLine(text);
       }
 

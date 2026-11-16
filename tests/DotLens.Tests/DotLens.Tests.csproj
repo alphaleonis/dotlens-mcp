@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Lets the tests run where only a newer .NET runtime is installed, as on CI with only SDK 11. -->
+    <RollForward>Major</RollForward>
     <!-- Suppress xUnit1051: Test methods should use TestContext.Current.CancellationToken -->
     <!-- Most tests here don't need external cancellation support -->
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>

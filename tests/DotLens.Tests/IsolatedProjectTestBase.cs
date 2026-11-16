@@ -63,6 +63,9 @@ public abstract class IsolatedProjectTestBase : IAsyncLifetime
       // Outside the repo, MSBuild would otherwise build the copy with the newest installed SDK.
       File.Copy(Path.Combine(repoRoot, "global.json"), Path.Combine(_tempDir, "global.json"));
 
+      // The .sln holds every fixture project, so tests that load it instead of the .slnx also find them restored.
+      await TestFixtureRestore.EnsureRestoredAsync(Path.Combine(_tempDir, "TestFixtures.sln"));
+
       // Initialize workspace manager for temp project
       var options = Options.Create(new DotLensOptions());
       WorkspaceManager = new WorkspaceManager(NullLogger<WorkspaceManager>.Instance, options);

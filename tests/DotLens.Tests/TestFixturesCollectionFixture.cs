@@ -63,6 +63,7 @@ public sealed class TestFixturesCollectionFixture : IAsyncLifetime
       var options = Options.Create(new DotLensOptions());
       _workspaceManager = new WorkspaceManager(NullLogger<WorkspaceManager>.Instance, options);
 
+      await TestFixtureRestore.EnsureRestoredAsync(TestFixturesSolutionPath);
       await _workspaceManager.LoadSolutionAsync(TestFixturesSolutionPath);
    }
 

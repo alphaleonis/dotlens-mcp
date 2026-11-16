@@ -12,14 +12,14 @@ Project URL: https://github.com/Humanizr/Humanizer
 Copyright: Copyright (c) .NET Foundation and Contributors
 
 -------------------------------------------------------------
-Microsoft.Bcl.AsyncInterfaces 10.0.1
+Microsoft.Bcl.AsyncInterfaces 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 Redistributed inside Microsoft.CodeAnalysis.Workspaces.MSBuild.
 
 -------------------------------------------------------------
-Microsoft.Build.Framework 17.11.48
+Microsoft.Build.Framework 18.7.1
 License: MIT
 Project URL: http://go.microsoft.com/fwlink/?LinkId=624683
 Copyright: © Microsoft Corporation. All rights reserved.
@@ -32,25 +32,25 @@ Copyright: © Microsoft Corporation. All rights reserved.
 Redistributed inside Microsoft.CodeAnalysis.Workspaces.MSBuild.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.Common 5.9.0
+Microsoft.CodeAnalysis.Common 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.CSharp 5.9.0
+Microsoft.CodeAnalysis.CSharp 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.CSharp.Features 5.9.0
+Microsoft.CodeAnalysis.CSharp.Features 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.CSharp.Workspaces 5.9.0
+Microsoft.CodeAnalysis.CSharp.Workspaces 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
@@ -62,31 +62,31 @@ Project URL: https://github.com/microsoft/elfie-arriba
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.Features 5.9.0
+Microsoft.CodeAnalysis.Features 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.Scripting.Common 5.9.0
+Microsoft.CodeAnalysis.Scripting.Common 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.Workspaces.Common 5.9.0
+Microsoft.CodeAnalysis.Workspaces.Common 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.CodeAnalysis.Workspaces.MSBuild 5.9.0
+Microsoft.CodeAnalysis.Workspaces.MSBuild 5.12.0
 License: MIT
 Project URL: https://github.com/dotnet/roslyn
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-Microsoft.DiaSymReader 2.0.0
+Microsoft.DiaSymReader 2.2.10
 License: MIT
 Project URL: https://github.com/dotnet/symreader
 Copyright: © Microsoft Corporation. All rights reserved.
@@ -285,6 +285,12 @@ Copyright: © Microsoft Corporation. All rights reserved.
 Redistributed inside Microsoft.CodeAnalysis.Workspaces.MSBuild.
 
 -------------------------------------------------------------
+Microsoft.NET.StringTools 18.7.1
+License: MIT
+Project URL: http://go.microsoft.com/fwlink/?LinkId=624683
+Copyright: © Microsoft Corporation. All rights reserved.
+
+-------------------------------------------------------------
 Microsoft.VisualStudio.SolutionPersistence 1.0.52
 License: MIT
 Project URL: https://github.com/microsoft/vs-solutionpersistence
@@ -331,37 +337,37 @@ Copyright: © Microsoft Corporation. All rights reserved.
 Redistributed inside Microsoft.CodeAnalysis.Workspaces.MSBuild.
 
 -------------------------------------------------------------
-System.Composition.AttributedModel 10.0.1
+System.Composition.AttributedModel 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-System.Composition.Convention 10.0.1
+System.Composition.Convention 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-System.Composition.Hosting 10.0.1
+System.Composition.Hosting 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-System.Composition.Runtime 10.0.1
+System.Composition.Runtime 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-System.Composition.TypedParts 10.0.1
+System.Composition.TypedParts 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
 
 -------------------------------------------------------------
-System.Configuration.ConfigurationManager 10.0.1
+System.Configuration.ConfigurationManager 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
@@ -406,7 +412,7 @@ Copyright: © Microsoft Corporation. All rights reserved.
 Redistributed inside Microsoft.CodeAnalysis.Workspaces.MSBuild.
 
 -------------------------------------------------------------
-System.Security.Cryptography.ProtectedData 10.0.1
+System.Security.Cryptography.ProtectedData 10.0.10
 License: MIT
 Project URL: https://dot.net/
 Copyright: © Microsoft Corporation. All rights reserved.
