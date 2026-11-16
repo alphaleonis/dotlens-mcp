@@ -84,7 +84,8 @@ public class FindReferencesTool
             var lineSpan = refTree.GetLineSpan(refSpan, cancellationToken);
 
             var refRoot = await refTree.GetRootAsync(cancellationToken);
-            var refNode = refRoot.FindNode(refSpan);
+            // ClassifyReference widens from the reference's own node, not from a same-span wrapper such as an argument.
+            var refNode = refRoot.FindNode(refSpan, getInnermostNodeForTie: true);
             var kind = ClassifyReference(refNode);
 
             string? lineText = null;
@@ -155,40 +156,71 @@ public class FindReferencesTool
       if (IsWithinObjectCreationType(node))
          return ReferenceKind.Call;
 
-      // === Write detection ===
+      return IsWrittenTo(GetAccessExpression(node)) ? ReferenceKind.Write : ReferenceKind.Read;
+   }
 
-      // Assignment: x = val, x += val, etc. — node is the Left of an AssignmentExpression.
-      // Compound assignments (+=, -=, etc.) are read-modify-write but we classify as Write
-      // since write is the dominant action and the enum doesn't support ReadWrite.
-      if (parent is AssignmentExpressionSyntax assignment && assignment.Left == node)
-         return ReferenceKind.Write;
+   /// <summary>
+   /// Returns the expression that reads or writes the referenced symbol: the member access, member binding
+   /// or element access that holds <paramref name="node"/>, widened through parentheses.
+   /// </summary>
+   private static SyntaxNode GetAccessExpression(SyntaxNode node)
+   {
+      var access = node switch
+      {
+         // An indexer reference sits on the brackets of the element access.
+         BracketedArgumentListSyntax
+         {
+            Parent: (ElementAccessExpressionSyntax or ElementBindingExpressionSyntax or ImplicitElementAccessSyntax) and var elementAccess
+         } => elementAccess,
+         _ when node.Parent is MemberAccessExpressionSyntax memberAccess && memberAccess.Name == node => memberAccess,
+         _ when node.Parent is MemberBindingExpressionSyntax memberBinding => memberBinding,
+         _ => node,
+      };
 
-      // Member assignment: obj.Prop = val, obj.Prop += val — same logic as above
-      if (parent is MemberAccessExpressionSyntax memberAccess2 && memberAccess2.Name == node
-          && memberAccess2.Parent is AssignmentExpressionSyntax parentAssignment
-          && parentAssignment.Left == memberAccess2)
-         return ReferenceKind.Write;
+      while (access.Parent is ParenthesizedExpressionSyntax parenthesized)
+         access = parenthesized;
 
-      // Out/ref argument: Method(out x), Method(ref x)
-      if (parent is ArgumentSyntax { RefKindKeyword.RawKind: (int)SyntaxKind.OutKeyword or (int)SyntaxKind.RefKeyword })
-         return ReferenceKind.Write;
+      return access;
+   }
 
-      // Out/ref argument via member access: Method(out obj.Field), Method(ref obj.Field)
-      if (parent is MemberAccessExpressionSyntax memberAccess3 && memberAccess3.Name == node
-          && memberAccess3.Parent is ArgumentSyntax { RefKindKeyword.RawKind: (int)SyntaxKind.OutKeyword or (int)SyntaxKind.RefKeyword })
-         return ReferenceKind.Write;
+   /// <summary>
+   /// Returns whether <paramref name="access"/> is assigned, incremented, decremented, deconstructed into,
+   /// or passed as a <c>ref</c> or <c>out</c> argument.
+   /// </summary>
+   /// <remarks>
+   /// A compound assignment such as <c>+=</c> counts as a write, because <see cref="ReferenceKind"/> has no
+   /// read-write kind. A member initializer with a nested initializer, such as <c>Items = { 1 }</c>, reads the
+   /// member.
+   /// </remarks>
+   private static bool IsWrittenTo(SyntaxNode access)
+   {
+      switch (access.Parent)
+      {
+         case AssignmentExpressionSyntax assignment when assignment.Left == access:
+            return assignment.Right is not InitializerExpressionSyntax;
+         case PostfixUnaryExpressionSyntax postfix:
+            return postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression;
+         case PrefixUnaryExpressionSyntax prefix:
+            return prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression;
+         case ArgumentSyntax { RefKindKeyword.RawKind: (int)SyntaxKind.OutKeyword or (int)SyntaxKind.RefKeyword }:
+            return true;
+         case ArgumentSyntax { Parent: TupleExpressionSyntax tuple }:
+            return IsDeconstructionTarget(tuple);
+         default:
+            return false;
+      }
+   }
 
-      // Increment/decrement: x++, --x
-      if (parent is PostfixUnaryExpressionSyntax postfix
-          && postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression)
-         return ReferenceKind.Write;
+   /// <summary>
+   /// Returns whether <paramref name="tuple"/> is the left side of a deconstruction, or nested inside one.
+   /// </summary>
+   private static bool IsDeconstructionTarget(TupleExpressionSyntax tuple)
+   {
+      var outermost = tuple;
+      while (outermost.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax enclosing })
+         outermost = enclosing;
 
-      if (parent is PrefixUnaryExpressionSyntax prefix
-          && prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression)
-         return ReferenceKind.Write;
-
-      // === Default: Read ===
-      return ReferenceKind.Read;
+      return outermost.Parent is AssignmentExpressionSyntax assignment && assignment.Left == outermost;
    }
 
    /// <summary>

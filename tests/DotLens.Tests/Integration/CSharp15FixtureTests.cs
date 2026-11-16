@@ -35,7 +35,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -237,6 +237,132 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Assert.Equal(3, result.Data.TotalReferences);
          Assert.Equal(expected, result.Data.References);
       }
+   }
+
+   [Fact]
+   public async Task FindReferences_IndexerWrite_SettableIndexer()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         "Slots.this[]",
+         (53, 23, ReferenceKind.Read),
+         (54, 12, ReferenceKind.Write),
+         (55, 12, ReferenceKind.Write),
+         (56, 12, ReferenceKind.Write),
+         (57, 12, ReferenceKind.Write),
+         (58, 12, ReferenceKind.Write),
+         (59, 14, ReferenceKind.Write),
+         (60, 14, ReferenceKind.Write),
+         (61, 13, ReferenceKind.Write),
+         (61, 23, ReferenceKind.Write),
+         (62, 14, ReferenceKind.Write),
+         (62, 31, ReferenceKind.Write),
+         (62, 48, ReferenceKind.Read),
+         (63, 13, ReferenceKind.Write),
+         (64, 31, ReferenceKind.Write),
+         (70, 55, ReferenceKind.Write),
+         (70, 76, ReferenceKind.Write));
+   }
+
+   [Fact]
+   public async Task FindReferences_IndexerWrite_ExtensionIndexer()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         "BoardExtensions.this[]",
+         (82, 23, ReferenceKind.Read),
+         (83, 12, ReferenceKind.Write),
+         (84, 12, ReferenceKind.Write),
+         (85, 12, ReferenceKind.Write),
+         (86, 14, ReferenceKind.Write),
+         (87, 13, ReferenceKind.Write),
+         (87, 26, ReferenceKind.Write));
+   }
+
+   [Fact]
+   public async Task FindReferences_IndexerWrite_RefReturningIndexerAsArgument()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         "RefSlots.this[]",
+         (74, 12, ReferenceKind.Write),
+         (75, 21, ReferenceKind.Write),
+         (76, 21, ReferenceKind.Write),
+         (77, 27, ReferenceKind.Read));
+   }
+
+   /// <summary>
+   /// The outer element initializer <c>[0] = { [1] = 4 }</c> gets the shelf row and sets an element of it.
+   /// </summary>
+   [Fact]
+   public async Task FindReferences_IndexerWrite_NestedInitializerTargetIsRead()
+   {
+      await AssertIndexerWritesReferencesAsync("Shelf.this[]", (70, 47, ReferenceKind.Read));
+   }
+
+   [Fact]
+   public async Task FindReferences_PropertyAssignmentTargets_AreWrites()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         "Slots.Count",
+         (64, 40, ReferenceKind.Write),
+         (65, 14, ReferenceKind.Write),
+         (65, 27, ReferenceKind.Write),
+         (66, 14, ReferenceKind.Write));
+   }
+
+   [Fact]
+   public async Task FindReferences_PropertyNestedInitializerTarget_IsRead()
+   {
+      await AssertIndexerWritesReferencesAsync("Shelf.Front", (70, 66, ReferenceKind.Read));
+   }
+
+   [Fact]
+   public async Task FindReferences_BareLocalDeconstructionTarget_IsWrite()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         IndexerWritesPosition(53, 11),
+         (62, 19, ReferenceKind.Write),
+         (67, 14, ReferenceKind.Read));
+   }
+
+   [Fact]
+   public async Task FindReferences_BareLocalArguments_AreWritesOnlyByRefOrOut()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         IndexerWritesPosition(104, 11),
+         (105, 34, ReferenceKind.Read),
+         (106, 8, ReferenceKind.Write),
+         (107, 16, ReferenceKind.Write),
+         (107, 27, ReferenceKind.Write),
+         (108, 19, ReferenceKind.Read));
+   }
+
+   [Fact]
+   public async Task FindReferences_BarePropertyDeconstructionTarget_IsWrite()
+   {
+      await AssertIndexerWritesReferencesAsync(
+         "Ledger.Total",
+         (105, 8, ReferenceKind.Write),
+         (105, 21, ReferenceKind.Write),
+         (106, 15, ReferenceKind.Write),
+         (106, 25, ReferenceKind.Read));
+   }
+
+   private LookupByPosition IndexerWritesPosition(int line, int column) =>
+      new() { FilePath = _fixture.GetPath("IndexerWrites.cs"), Line = line, Column = column };
+
+   private Task AssertIndexerWritesReferencesAsync(string name, params (int Line, int Column, ReferenceKind Kind)[] expected) =>
+      AssertIndexerWritesReferencesAsync(new LookupByName { Name = name }, expected);
+
+   private async Task AssertIndexerWritesReferencesAsync(SymbolLookup lookup, params (int Line, int Column, ReferenceKind Kind)[] expected)
+   {
+      var tool = new FindReferencesTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.FindReferencesAsync(lookup, cancellationToken: CT);
+
+      var references = result.Data.References ?? throw new InvalidOperationException("Compact verbosity lists references");
+      Assert.Equal(
+         expected.Select(e => new ReferenceInfo { FilePath = "IndexerWrites.cs", Line = e.Line, Column = e.Column, Kind = e.Kind }),
+         references.OrderBy(r => r.Line).ThenBy(r => r.Column));
+      Assert.Equal(expected.Length, result.Data.TotalReferences);
    }
 
    [Fact]
@@ -465,6 +591,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Location = new SymbolLocation { FilePath = "ExtensionMembers.cs", Line = 21, Column = 4 },
          ContainingType = "CSharp15TestProject.TextExtensions",
       },
+      GridExtensionBlock with
+      {
+         Name = "extension(Board)",
+         Location = new SymbolLocation { FilePath = "IndexerWrites.cs", Line = 39, Column = 4 },
+         ContainingType = "CSharp15TestProject.BoardExtensions",
+      },
       .. RefReceiverExtensionBlocks,
    ];
 
@@ -581,6 +713,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
       Assert.Equal(GridExtensionBlock, result.Data.Symbol);
       Assert.Equal(0, result.Data.TotalReferences);
+      Assert.NotNull(result.Data.References);
       Assert.Empty(result.Data.References);
    }
 
