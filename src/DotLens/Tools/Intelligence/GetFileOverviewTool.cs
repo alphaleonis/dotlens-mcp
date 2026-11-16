@@ -56,11 +56,12 @@ public class GetFileOverviewTool
                namespaceDecl = ns;
                break;
 
-            case TypeDeclarationSyntax typeDecl:
+            // Enums are not TypeDeclarationSyntax, and delegates are not BaseTypeDeclarationSyntax.
+            case BaseTypeDeclarationSyntax or DelegateDeclarationSyntax:
                typeCount++;
                if (verbosity != ToolResultVerbosity.Summary)
                {
-                  var symbol = semanticModel.GetDeclaredSymbol(typeDecl, ct);
+                  var symbol = semanticModel.GetDeclaredSymbol(node, ct);
                   if (symbol != null)
                   {
                      types.Add(RoslynHelpers.CreateSymbolResponse(

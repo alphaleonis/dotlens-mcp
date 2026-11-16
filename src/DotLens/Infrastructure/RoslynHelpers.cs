@@ -1035,6 +1035,16 @@ public static class RoslynHelpers
       typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameOnly,
       genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters);
 
+   /// <summary>
+   /// Format for a delegate's return type, name and parameters, with the conventions of a method declaration.
+   /// </summary>
+   private static readonly SymbolDisplayFormat DelegateSignatureFormat = new(
+      typeQualificationStyle: RoslynDisplayFormats.MethodSignatureCompact.TypeQualificationStyle,
+      genericsOptions: RoslynDisplayFormats.MethodSignatureCompact.GenericsOptions,
+      delegateStyle: SymbolDisplayDelegateStyle.NameAndSignature,
+      parameterOptions: RoslynDisplayFormats.MethodSignatureCompact.ParameterOptions,
+      miscellaneousOptions: RoslynDisplayFormats.MethodSignatureCompact.MiscellaneousOptions);
+
    private static string BuildTypeDeclaration(INamedTypeSymbol type)
    {
       var sb = new System.Text.StringBuilder();
@@ -1076,8 +1086,8 @@ public static class RoslynHelpers
          _ => ""
       });
 
-      // Name with type parameters (use Roslyn for this part)
-      sb.Append(type.ToDisplayString(TypeNameFormat));
+      // Name with type parameters, plus the return type and parameters of a delegate
+      sb.Append(type.ToDisplayString(type.TypeKind == TypeKind.Delegate ? DelegateSignatureFormat : TypeNameFormat));
 
       return sb.ToString().TrimEnd();
    }

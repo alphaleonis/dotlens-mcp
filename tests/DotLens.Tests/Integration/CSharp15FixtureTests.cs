@@ -35,7 +35,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -1027,6 +1027,114 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
       var types = result.Data.Types ?? throw new InvalidOperationException("Compact verbosity lists types");
       Assert.Equal(RefReceiverExtensionBlocks, types.OfType<ExtensionSymbolResponse>());
+   }
+
+   private static readonly SymbolResponse[] EnumsAndDelegatesTypes =
+   [
+      new EnumSymbolResponse
+      {
+         Name = "Channel",
+         Location = new SymbolLocation { FilePath = "EnumsAndDelegates.cs", Line = 3, Column = 13 },
+         Accessibility = AccessibilityDto.Public,
+         Modifiers = SymbolModifiers.Sealed,
+      },
+      new DelegateSymbolResponse
+      {
+         Name = "Filter",
+         Location = new SymbolLocation { FilePath = "EnumsAndDelegates.cs", Line = 9, Column = 22 },
+         Accessibility = AccessibilityDto.Public,
+         Modifiers = SymbolModifiers.Sealed,
+      },
+      new ClassSymbolResponse
+      {
+         Name = "Dispatcher",
+         Location = new SymbolLocation { FilePath = "EnumsAndDelegates.cs", Line = 11, Column = 14 },
+         Accessibility = AccessibilityDto.Public,
+      },
+      new EnumSymbolResponse
+      {
+         Name = "Priority",
+         Location = new SymbolLocation { FilePath = "EnumsAndDelegates.cs", Line = 13, Column = 16 },
+         ContainingType = "CSharp15TestProject.Dispatcher",
+         Accessibility = AccessibilityDto.Public,
+         Modifiers = SymbolModifiers.Sealed,
+      },
+      new DelegateSymbolResponse
+      {
+         Name = "Handler",
+         Location = new SymbolLocation { FilePath = "EnumsAndDelegates.cs", Line = 19, Column = 25 },
+         ContainingType = "CSharp15TestProject.Dispatcher",
+         Accessibility = AccessibilityDto.Public,
+         Modifiers = SymbolModifiers.Sealed,
+      },
+   ];
+
+   [Fact]
+   public async Task FileOverview_EnumsAndDelegates_SummaryCountsEveryType()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("EnumsAndDelegates.cs"), ToolResultVerbosity.Summary, CT);
+
+      Assert.Equal(5, result.Data.TypeCount);
+      Assert.Null(result.Data.Types);
+      Assert.Equal((5, 5), (result.Metadata?.TotalCount, result.Metadata?.ReturnedCount));
+   }
+
+   [Fact]
+   public async Task FileOverview_EnumsAndDelegates_CompactListsEveryType()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("EnumsAndDelegates.cs"), ToolResultVerbosity.Compact, CT);
+
+      Assert.Null(result.Data.TypeCount);
+      Assert.Equal(EnumsAndDelegatesTypes, result.Data.Types);
+      Assert.Equal((5, 5), (result.Metadata?.TotalCount, result.Metadata?.ReturnedCount));
+   }
+
+   [Fact]
+   public async Task FileOverview_EnumsAndDelegates_FullListsEveryType()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("EnumsAndDelegates.cs"), ToolResultVerbosity.Full, CT);
+
+      Assert.Null(result.Data.TypeCount);
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(
+         [
+            EnumsAndDelegatesTypes[0] with { FullyQualifiedName = "CSharp15TestProject.Channel", Declaration = "public enum Channel" },
+            EnumsAndDelegatesTypes[1] with { FullyQualifiedName = "CSharp15TestProject.Filter<T>", Declaration = "public delegate bool Filter<T>(T item)" },
+            EnumsAndDelegatesTypes[2] with { FullyQualifiedName = "CSharp15TestProject.Dispatcher", Declaration = "public class Dispatcher" },
+            EnumsAndDelegatesTypes[3] with { FullyQualifiedName = "CSharp15TestProject.Dispatcher.Priority", Declaration = "public enum Priority" },
+            EnumsAndDelegatesTypes[4] with { FullyQualifiedName = "CSharp15TestProject.Dispatcher.Handler", Declaration = "public delegate void Handler(Priority priority)" },
+         ],
+         types.Select(t => t with { ContainingNamespace = null, TypeParameters = null }));
+      Assert.Equal(["CSharp15TestProject"], types.Select(t => t.ContainingNamespace).Distinct());
+      Assert.Equal([null, "T", null, null, null], types.Select(t => t.TypeParameters is { } parameters ? string.Join(", ", parameters) : null));
+      Assert.Equal((5, 5), (result.Metadata?.TotalCount, result.Metadata?.ReturnedCount));
+   }
+
+   /// <summary>
+   /// Delegates whose parameters are ref, out, in, params, defaulted or nullable, which a delegate declaration
+   /// shows with the conventions of a method declaration.
+   /// </summary>
+   [Fact]
+   public async Task FileOverview_EnumsAndDelegates_FullDelegateDeclarationsShowSignature()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("DelegateSignatures.cs"), ToolResultVerbosity.Full, CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "public static class DelegateSignatures"),
+            (typeof(DelegateSymbolResponse), "public delegate int Selector(ref int first, out int second, in int third, params int[] rest)"),
+            (typeof(DelegateSymbolResponse), "internal delegate string Formatter<T>(T? value, string format = \"G\", int width = 0)"),
+         ],
+         types.Select(t => (t.GetType(), t.Declaration)));
    }
 
    [Fact]
