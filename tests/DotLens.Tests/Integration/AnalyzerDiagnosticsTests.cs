@@ -133,54 +133,51 @@ public class AnalyzerDiagnosticsTests : IAsyncLifetime
       Assert.Contains(diagnosticIds, id => id?.StartsWith("CA") == true);
    }
 
+   private static List<(string Severity, string Message, int StartLine, int StartColumn)> DiagnosticsWithId(
+      JsonNode data, string id) =>
+      data.GetArray("diagnostics")
+         .Where(d => d.GetString("id") == id)
+         .Select(d =>
+         {
+            var location = d.GetObject("location");
+            return (d.GetString("severity"), d.GetString("message"), location.GetInt("startLine"), location.GetInt("startColumn"));
+         })
+         .OrderBy(d => d.Item3)
+         .ThenBy(d => d.Item4)
+         .ToList();
+
    [Fact]
    public async Task GetDiagnostics_WithAnalyzers_IncludesCA2007_ConfigureAwait()
    {
-      // Act
       var result = await _getDiagnostics.GetDiagnosticsAsync(
          filePath: _analyzerWarningsPath,
          includeAnalyzers: true,
          cancellationToken: CT);
 
-      // Assert
-      var data = GetData(result);
-      var diagnostics = GetNode(data, "Diagnostics")!.AsArray();
-
-      var ca2007 = diagnostics.FirstOrDefault(d => GetStringProperty(d, "Id") == "CA2007");
-
-      // CA2007 availability depends on SDK version and analyzer configuration
-      // Skip if not available (varies by SDK patch version)
-      if (ca2007 == null)
-      {
-         Assert.Skip("CA2007 analyzer diagnostic not generated (SDK version may not include this rule)");
-      }
-
-      Assert.Contains("ConfigureAwait", GetStringProperty(ca2007, "Message")!);
+      // Both awaits in AnalyzerWarnings.cs, on the GetStringAsync call that each one awaits.
+      Assert.Equal(
+         [
+            ("warning", "Consider calling ConfigureAwait on the awaited task", 15, 28),
+            ("warning", "Consider calling ConfigureAwait on the awaited task", 25, 28),
+         ],
+         DiagnosticsWithId(GetData(result), "CA2007"));
    }
 
    [Fact]
    public async Task GetDiagnostics_WithAnalyzers_IncludesCA2016_CancellationToken()
    {
-      // Act
       var result = await _getDiagnostics.GetDiagnosticsAsync(
          filePath: _analyzerWarningsPath,
          includeAnalyzers: true,
          cancellationToken: CT);
 
-      // Assert
-      var data = GetData(result);
-      var diagnostics = GetNode(data, "Diagnostics")!.AsArray();
-
-      var ca2016 = diagnostics.FirstOrDefault(d => GetStringProperty(d, "Id") == "CA2016");
-
-      // CA2016 availability depends on SDK version and analyzer configuration
-      // Skip if not available (varies by SDK patch version)
-      if (ca2016 == null)
-      {
-         Assert.Skip("CA2016 analyzer diagnostic not generated (SDK version may not include this rule)");
-      }
-
-      Assert.Contains("cancellationToken", GetStringProperty(ca2016, "Message")!, StringComparison.OrdinalIgnoreCase);
+      Assert.Equal(
+         [
+            ("warning",
+               "Forward the 'cancellationToken' parameter to the 'GetStringAsync' method or pass in 'CancellationToken.None' explicitly to indicate intentionally not propagating the token",
+               25, 28),
+         ],
+         DiagnosticsWithId(GetData(result), "CA2016"));
    }
 
    [Fact]
