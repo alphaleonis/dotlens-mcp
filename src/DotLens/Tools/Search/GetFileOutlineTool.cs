@@ -172,19 +172,22 @@ public class GetFileOutlineTool
       }
 
       public override void VisitClassDeclaration(ClassDeclarationSyntax node) =>
-         VisitTypeDeclaration(node, "class", node.TypeParameterList, node.BaseList, node.ConstraintClauses);
+         VisitTypeDeclaration(node, "class");
 
       public override void VisitStructDeclaration(StructDeclarationSyntax node) =>
-         VisitTypeDeclaration(node, "struct", node.TypeParameterList, node.BaseList, node.ConstraintClauses);
+         VisitTypeDeclaration(node, "struct");
 
       public override void VisitInterfaceDeclaration(InterfaceDeclarationSyntax node) =>
-         VisitTypeDeclaration(node, "interface", node.TypeParameterList, node.BaseList, node.ConstraintClauses);
+         VisitTypeDeclaration(node, "interface");
 
       public override void VisitRecordDeclaration(RecordDeclarationSyntax node)
       {
          var keyword = node.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record";
-         VisitTypeDeclaration(node, keyword, node.TypeParameterList, node.BaseList, node.ConstraintClauses, node.ParameterList);
+         VisitTypeDeclaration(node, keyword);
       }
+
+      public override void VisitUnionDeclaration(UnionDeclarationSyntax node) =>
+         VisitTypeDeclaration(node, "union");
 
       public override void VisitEnumDeclaration(EnumDeclarationSyntax node)
       {
@@ -208,25 +211,28 @@ public class GetFileOutlineTool
          AppendLine(node.CloseBraceToken.GetLocation().GetLineSpan().StartLinePosition.Line + 1, "}");
       }
 
-      private void VisitTypeDeclaration(
-         TypeDeclarationSyntax node,
-         string keyword,
-         TypeParameterListSyntax? typeParams,
-         BaseListSyntax? baseList,
-         SyntaxList<TypeParameterConstraintClauseSyntax> constraints,
-         ParameterListSyntax? parameterList = null)
+      private void VisitTypeDeclaration(TypeDeclarationSyntax node, string keyword)
       {
          if (!_includePrivate && IsPrivate(node))
             return;
 
          AppendDocComment(node);
          var modifiers = node.Modifiers.ToString();
-         var typeParamsStr = typeParams?.ToString() ?? "";
-         var paramsStr = parameterList?.ToString() ?? "";
-         var baseListStr = baseList != null ? $" : {baseList.Types}" : "";
-         var constraintsStr = constraints.Count > 0 ? " " + string.Join(" ", constraints.Select(c => c.ToString())) : "";
+         var typeParamsStr = node.TypeParameterList?.ToString() ?? "";
+         var paramsStr = node.ParameterList?.ToString() ?? "";
+         var baseListStr = node.BaseList != null ? $" : {node.BaseList.Types}" : "";
+         var constraintsStr = node.ConstraintClauses.Count > 0 ? " " + string.Join(" ", node.ConstraintClauses.Select(c => c.ToString())) : "";
 
-         AppendLine(GetLine(node), $"{modifiers} {keyword} {node.Identifier}{typeParamsStr}{paramsStr}{baseListStr}{constraintsStr}".TrimStart());
+         var header = $"{modifiers} {keyword} {node.Identifier}{typeParamsStr}{paramsStr}{baseListStr}{constraintsStr}".TrimStart();
+
+         // A declaration without a body, such as a positional record, has no brace tokens to locate.
+         if (node.OpenBraceToken.IsKind(SyntaxKind.None))
+         {
+            AppendLine(GetLine(node), header + ";");
+            return;
+         }
+
+         AppendLine(GetLine(node), header);
          AppendLine(node.OpenBraceToken.GetLocation().GetLineSpan().StartLinePosition.Line + 1, "{");
 
          _indentLevel++;
