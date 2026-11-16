@@ -303,12 +303,9 @@ public class SymbolLookupService
       // Try to find symbol at this position
       var symbol = RoslynHelpers.FindSymbolAtPosition(semanticModel, node);
 
-      if (symbol == null)
+      if (symbol == null && node != null)
       {
-         // Try walking up the tree to find a declaration
-         symbol = node?.AncestorsAndSelf()
-            .Select(n => semanticModel.GetDeclaredSymbol(n, cancellationToken))
-            .FirstOrDefault(s => s != null);
+         symbol = FindDeclarationOwningPosition(semanticModel, node, cancellationToken);
       }
 
       if (symbol == null)
@@ -332,6 +329,39 @@ public class SymbolLookupService
 
       return [result];
    }
+
+   /// <summary>
+   /// Returns the nearest declaration whose own syntax holds <paramref name="node"/>, such as its name, a modifier or
+   /// its parameter list.
+   /// </summary>
+   /// <returns>
+   /// The declared symbol, or null when the walk meets a value expression first. A declaration above an expression
+   /// owns the expression, such as a local that owns its initializer, so it is not the symbol at the position.
+   /// </returns>
+   private static ISymbol? FindDeclarationOwningPosition(
+      SemanticModel semanticModel,
+      SyntaxNode node,
+      CancellationToken cancellationToken)
+   {
+      foreach (var ancestor in node.AncestorsAndSelf())
+      {
+         if (semanticModel.GetDeclaredSymbol(ancestor, cancellationToken) is { } declared)
+            return declared;
+
+         if (ancestor is ExpressionSyntax expression && IsValueExpression(expression))
+            return null;
+      }
+
+      return null;
+   }
+
+   /// <summary>
+   /// Returns whether an expression computes a value, as opposed to naming a type or namespace, or naming the
+   /// element in <c>name:</c> or <c>Name =</c>.
+   /// </summary>
+   private static bool IsValueExpression(ExpressionSyntax expression) =>
+      !SyntaxFacts.IsInNamespaceOrTypeContext(expression)
+      && expression.Parent is not (NameColonSyntax or NameEqualsSyntax);
 
    private async Task<IReadOnlyList<SymbolLookupResult<TSymbol>>> FindByNameAsync<TSymbol>(
       LookupByName lookup,

@@ -371,8 +371,16 @@ public static class RoslynHelpers
    /// Finds the symbol at a given position in a document.
    /// Tries both GetSymbolInfo and GetDeclaredSymbol.
    /// </summary>
+   /// <remarks>
+   /// An argument list, the node of its brackets, parentheses and commas, resolves to the symbol of the node that owns
+   /// the list, such as a call, an indexer or an attribute. A token inside an argument has the argument's own node, so
+   /// it keeps its own symbol.
+   /// </remarks>
    public static ISymbol? FindSymbolAtPosition(SemanticModel semanticModel, SyntaxNode? node)
    {
+      if (node is BaseArgumentListSyntax or AttributeArgumentListSyntax && node.Parent is { } owner)
+         node = owner;
+
       if (node == null)
          return null;
 

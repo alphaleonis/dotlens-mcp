@@ -5,6 +5,7 @@ using DotLens.Tools.Intelligence;
 using DotLens.Tools.Navigation;
 using DotLens.Tools.Search;
 using DotLens.Tools.Shared;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace DotLens.Tests.Integration;
@@ -34,7 +35,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -257,6 +258,98 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             new CallerLocationInfo { FilePath = "ExtensionIndexer.cs", Line = 22, Column = 28, LineText = "var bottomLeft = grid[1, 0];" },
          ],
          callers.Select(c => c.Location));
+   }
+
+   /// <summary>
+   /// Line 20 of ExtensionIndexer.cs is <c>var topLeft = grid[0, 0];</c>, where <c>find_references</c> reports the
+   /// extension indexer at the <c>[</c>.
+   /// </summary>
+   [Theory]
+   [InlineData("ExtensionIndexer.cs", 20, 25, "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid).this[int, int]")]
+   [InlineData("ExtensionIndexer.cs", 20, 27, "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid).this[int, int]")]
+   [InlineData("ExtensionIndexer.cs", 20, 30, "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid).this[int, int]")]
+   [InlineData("IndexerUses.cs", 25, 23, "CSharp15TestProject.Row.this[int]")]
+   [InlineData("IndexerUses.cs", 25, 29, "CSharp15TestProject.Row.this[int]")]
+   [InlineData("IndexerUses.cs", 26, 24, "CSharp15TestProject.Row.this[int]")]
+   [InlineData("IndexerUses.cs", 27, 23, "CSharp15TestProject.Row.Slice(int, int)")]
+   [InlineData("IndexerUses.cs", 28, 29, "CSharp15TestProject.Row.this[int]")]
+   [InlineData("IndexerUses.cs", 28, 31, "CSharp15TestProject.Row.this[int]")]
+   public async Task LookupByPosition_IndexerBracketOrComma_ResolvesToIndexer(string file, int line, int column, string expected)
+   {
+      Assert.Equal([expected], await LookUpDisplayStringsAsync(file, line, column));
+   }
+
+   [Theory]
+   [InlineData(25, 24, "int index")]
+   [InlineData(26, 25, "System.Index.Index(int, bool)")]
+   [InlineData(27, 25, "System.Range.Range(System.Index, System.Index)")]
+   public async Task LookupByPosition_IndexerArgument_ResolvesToArgument(int line, int column, string expected)
+   {
+      Assert.Equal([expected], await LookUpDisplayStringsAsync("IndexerUses.cs", line, column));
+   }
+
+   /// <summary>
+   /// An array element access has no indexer symbol, so its <c>[</c> holds no symbol.
+   /// </summary>
+   [Fact]
+   public async Task LookupByPosition_IndexerOnArray_ReportsSymbolNotFound()
+   {
+      var service = new SymbolLookupService(_fixture.Workspace);
+      var lookup = new LookupByPosition { FilePath = _fixture.GetPath("IndexerUses.cs"), Line = 29, Column = 22 };
+
+      var ex = await Assert.ThrowsAsync<ToolException>(() => service.FindSingleAsync<ISymbol>(lookup, cancellationToken: CT));
+
+      Assert.Equal(ErrorCodes.SymbolNotFound, ex.Code);
+      Assert.Equal($"No ISymbol found at {lookup.FilePath}:29:22", ex.Message);
+   }
+
+   [Fact]
+   public async Task LookupByPosition_IndexerBracket_SymbolInfoDescribesIndexer()
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(
+         new LookupByPosition { FilePath = _fixture.GetPath("ExtensionIndexer.cs"), Line = 20, Column = 25 },
+         cancellationToken: CT);
+
+      Assert.Equal("this[]", result.Data.Name);
+      Assert.Equal("CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)", result.Data.ContainingType);
+   }
+
+   [Theory]
+   [InlineData("IndexerUses.cs", 28, 23, "CSharp15TestProject.RowUsage.Find(CSharp15TestProject.Row)")]
+   [InlineData("IndexerUses.cs", 35, 29, "CSharp15TestProject.Score.Add(int, int)")]
+   [InlineData("IndexerUses.cs", 35, 31, "CSharp15TestProject.Score.Add(int, int)")]
+   [InlineData("IndexerUses.cs", 36, 19, "CSharp15TestProject.Score.Score(int)")]
+   [InlineData("IndexerUses.cs", 36, 28, "CSharp15TestProject.Score.Score(int)")]
+   [InlineData("IndexerUses.cs", 37, 24, "CSharp15TestProject.Score.operator +(CSharp15TestProject.Score, CSharp15TestProject.Score)")]
+   [InlineData("PrimaryConstructors.cs", 14, 40, "CSharp15TestProject.Tally.Tally(int)")]
+   public async Task LookupByPosition_CallToken_ResolvesToCalledMember(string file, int line, int column, string expected)
+   {
+      Assert.Equal([expected], await LookUpDisplayStringsAsync(file, line, column));
+   }
+
+   /// <summary>
+   /// Each position sits inside a local's initializer, on a token that refers to no symbol.
+   /// </summary>
+   [Theory]
+   [InlineData("ExtensionIndexer.cs", 20, 26)]
+   [InlineData("IndexerUses.cs", 28, 28)]
+   [InlineData("IndexerUses.cs", 29, 22)]
+   [InlineData("IndexerUses.cs", 35, 30)]
+   public async Task LookupByPosition_ExpressionTokenWithoutSymbol_FindsNothing(string file, int line, int column)
+   {
+      Assert.Empty(await LookUpDisplayStringsAsync(file, line, column));
+   }
+
+   private async Task<List<string>> LookUpDisplayStringsAsync(string file, int line, int column)
+   {
+      var service = new SymbolLookupService(_fixture.Workspace);
+      var lookup = new LookupByPosition { FilePath = _fixture.GetPath(file), Line = line, Column = column };
+
+      var results = await service.FindAsync<ISymbol>(lookup, cancellationToken: CT);
+
+      return results.Select(r => r.Symbol.ToDisplayString()).ToList();
    }
 
    [Fact]
