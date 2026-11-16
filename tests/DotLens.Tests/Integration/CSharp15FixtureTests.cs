@@ -36,7 +36,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -94,6 +94,255 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             22: {
             23:    int Measure();
             24: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_ExtensionBlock_NestsMembersUnderHeader()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("ExtensionMembers.cs"), ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public static class TextExtensions
+             4: {
+             5:    extension(string text)
+             6:    {
+             7:       public bool IsShout => ...;
+             9:       public string Whisper();
+            11:       public static string Blank();
+            12:    }
+            14:    extension(int number)
+            15:    {
+            16:       public bool IsEven => ...;
+            18:       public int Doubled();
+            19:    }
+            21:    extension<T>(IEnumerable<T> items)
+            22:    {
+            23:       public bool IsEmpty => ...;
+            24:    }
+            25: }
+            27: public static class TextUsage
+            28: {
+            29:    public static string Quiet(string text);
+            30: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_ExtensionBlock_ShowsReceiverModifiersAndConstraints()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("RefReceiverExtensions.cs"), ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public struct Meter
+             4: {
+             5:    public int Reading;
+             6: }
+             8: public static class MeterExtensions
+             9: {
+            10:    extension(Meter meter)
+            11:    {
+            12:       public int Copy();
+            13:    }
+            15:    extension(ref Meter meter)
+            16:    {
+            17:       public void Advance();
+            18:    }
+            20:    extension(in Meter meter)
+            21:    {
+            22:       public int Peek();
+            23:    }
+            25:    extension(ref readonly Meter meter)
+            26:    {
+            27:       public int Look();
+            28:    }
+            30:    extension(scoped ref Meter meter)
+            31:    {
+            32:       public void Reset();
+            33:    }
+            35:    extension(scoped Span<int> span)
+            36:    {
+            37:       public int Size();
+            38:    }
+            40:    extension<T>(ref T value) where T : struct
+            41:    {
+            42:       public void Clear();
+            43:    }
+            44: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_ExtensionBlock_ShowsExpressionBodiedIndexer()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("ExtensionIndexer.cs"), ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public sealed class Grid(int[,] cells)
+             4: {
+             5:    public int[,] Cells { get; }
+             6: }
+             8: public static class GridExtensions
+             9: {
+            10:    extension(Grid grid)
+            11:    {
+            12:       public int this[int row, int column] => ...;
+            13:    }
+            14: }
+            16: public static class GridUsage
+            17: {
+            18:    public static int SumThreeCorners(Grid grid);
+            25: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_ExtensionBlock_ShowsReceiverlessAndMultiConstraintHeaders()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("ExtensionBlockHeaders.cs"), ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public static class CatalogExtensions
+             4: {
+             8:    extension(Catalog)
+             9:    {
+            10:       public static Catalog Empty();
+            11:    }
+            16:    extension<TKey, TValue>(IDictionary<TKey, TValue> map) where TKey : notnull where TValue : class, new()
+            19:    {
+            20:       public TValue GetOrCreate(TKey key);
+            22:       private int Spare => ...;
+            23:    }
+            24: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_ExtensionBlock_ShowsDocCommentAndOmitsPrivateMembers()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(
+         _fixture.GetPath("ExtensionBlockHeaders.cs"), includePrivate: false, includeDocComments: true, ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public static class CatalogExtensions
+             4: {
+              :    /// <summary>
+              :    /// Factories for <see cref="Catalog"/>.
+              :    /// </summary>
+             8:    extension(Catalog)
+             9:    {
+            10:       public static Catalog Empty();
+            11:    }
+              :    /**
+              :     * Lookups that fill in missing values.
+              :     */
+            16:    extension<TKey, TValue>(IDictionary<TKey, TValue> map) where TKey : notnull where TValue : class, new()
+            19:    {
+            20:       public TValue GetOrCreate(TKey key);
+            23:    }
+            24: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_MultiLineSignatures_PrintsEachSignatureOnOneLine()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("MultiLineSignatures.cs"), ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public interface ILedger
+             4: {
+             5:    int Count { get; }
+             6: }
+             8: public class Ledger<TKey, TValue>(IDictionary<TKey, TValue> entries, string title = "Ledger  one") : ILedger, IDisposable where TKey : notnull, IComparable<TKey>
+            16: {
+            17:    private int _disposals;
+            19:    private event EventHandler? Disposed;
+            21:    public Ledger(string name, bool strict = 1 < 2) : this(...);
+            30:    public int Count => ...;
+            32:    public Dictionary<TResult, List<TValue>> Group<TResult>(Func<TValue, TResult> selector, int limit) where TResult : notnull;
+            41:    public TValue this[TKey key] => ...;
+            44:    public void Dispose();
+            49: }
+            51: public delegate TResult Folder<in TItem, TResult>(TResult seed, TItem item) where TResult : struct;
+            57: public static class LedgerExtensions
+            58: {
+            59:    extension<TKey, TValue>(Ledger<TKey, TValue> ledger) where TKey : notnull, IComparable<TKey>
+            62:    {
+            63:       public bool IsEmpty => ...;
+            64:    }
+            65: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_MultiLineSignatures_OmitsPrivateFieldAndEventField()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOutlineAsync(_fixture.GetPath("MultiLineSignatures.cs"), includePrivate: false, ct: CT);
+
+      Assert.Equal(
+         """
+             1: namespace CSharp15TestProject;
+
+             3: public interface ILedger
+             4: {
+             5:    int Count { get; }
+             6: }
+             8: public class Ledger<TKey, TValue>(IDictionary<TKey, TValue> entries, string title = "Ledger  one") : ILedger, IDisposable where TKey : notnull, IComparable<TKey>
+            16: {
+            21:    public Ledger(string name, bool strict = 1 < 2) : this(...);
+            30:    public int Count => ...;
+            32:    public Dictionary<TResult, List<TValue>> Group<TResult>(Func<TValue, TResult> selector, int limit) where TResult : notnull;
+            41:    public TValue this[TKey key] => ...;
+            44:    public void Dispose();
+            49: }
+            51: public delegate TResult Folder<in TItem, TResult>(TResult seed, TItem item) where TResult : struct;
+            57: public static class LedgerExtensions
+            58: {
+            59:    extension<TKey, TValue>(Ledger<TKey, TValue> ledger) where TKey : notnull, IComparable<TKey>
+            62:    {
+            63:       public bool IsEmpty => ...;
+            64:    }
+            65: }
          """.ReplaceLineEndings(),
          result.Data.Outline);
    }
@@ -911,6 +1160,18 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Location = new SymbolLocation { FilePath = "AmbiguousMembers.cs", Line = 33, Column = 4 },
          ContainingType = "CSharp15TestProject.SpoolExtensions",
       },
+      GridExtensionBlock with
+      {
+         Name = "extension(Catalog)",
+         Location = new SymbolLocation { FilePath = "ExtensionBlockHeaders.cs", Line = 8, Column = 4 },
+         ContainingType = "CSharp15TestProject.CatalogExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension<TKey, TValue>(IDictionary<TKey, TValue>)",
+         Location = new SymbolLocation { FilePath = "ExtensionBlockHeaders.cs", Line = 16, Column = 4 },
+         ContainingType = "CSharp15TestProject.CatalogExtensions",
+      },
       GridExtensionBlock,
       GridExtensionBlock with
       {
@@ -935,6 +1196,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Name = "extension(Board)",
          Location = new SymbolLocation { FilePath = "IndexerWrites.cs", Line = 39, Column = 4 },
          ContainingType = "CSharp15TestProject.BoardExtensions",
+      },
+      GridExtensionBlock with
+      {
+         Name = "extension<TKey, TValue>(Ledger<TKey, TValue>)",
+         Location = new SymbolLocation { FilePath = "MultiLineSignatures.cs", Line = 59, Column = 4 },
+         ContainingType = "CSharp15TestProject.LedgerExtensions",
       },
       .. RefReceiverExtensionBlocks,
    ];
@@ -1443,7 +1710,9 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(
          [
             (typeof(ClassSymbolResponse), "BoardExtensions"),
+            (typeof(ClassSymbolResponse), "CatalogExtensions"),
             (typeof(ClassSymbolResponse), "GridExtensions"),
+            (typeof(ClassSymbolResponse), "LedgerExtensions"),
             (typeof(ClassSymbolResponse), "MeterExtensions"),
             (typeof(ClassSymbolResponse), "SpoolExtensions"),
             (typeof(ClassSymbolResponse), "TextExtensions"),
@@ -1453,7 +1722,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    }
 
    [Theory]
-   [InlineData("extension*", 15)]
+   [InlineData("extension*", 18)]
    [InlineData("extension(ref Meter)", 1)]
    [InlineData("Extension(Grid)", 1)]
    public async Task FindSymbols_ExtensionBlockName_NameMatchesBlockName(string name, int expectedCount)

@@ -119,11 +119,15 @@ public class GetFileOutlineTool
             if (t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia) ||
                 t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
             {
-               var comment = t.ToString().TrimEnd();
+               // ToString leaves out the opening "///", which is leading trivia inside the comment's structure.
+               var comment = t.ToFullString().TrimEnd();
+               var sourceIndent = node.SyntaxTree.GetLineSpan(t.FullSpan).StartLinePosition.Character;
                var indent = new string(' ', _indentLevel * _indentSpaces);
                foreach (var commentLine in comment.Split('\n'))
                {
                   var trimmedLine = commentLine.TrimEnd('\r');
+                  var leadingWhitespace = trimmedLine.Length - trimmedLine.TrimStart().Length;
+                  trimmedLine = trimmedLine[Math.Min(leadingWhitespace, sourceIndent)..];
                   _builder.Append(_lineNumberPadding);
                   _builder.Append(": ");
                   _builder.Append(indent);
@@ -145,7 +149,12 @@ public class GetFileOutlineTool
          if (_semanticModel == null)
             return false; // If no semantic model, include everything
 
-         var symbol = _semanticModel.GetDeclaredSymbol(node);
+         // A field or event field declares its symbols on its variables, which all share its modifiers.
+         var declaration = node is BaseFieldDeclarationSyntax field ? field.Declaration.Variables.FirstOrDefault() : node;
+         if (declaration == null)
+            return false;
+
+         var symbol = _semanticModel.GetDeclaredSymbol(declaration);
          if (symbol == null)
             return false; // If we can't get symbol info, include it
 
@@ -155,7 +164,7 @@ public class GetFileOutlineTool
       public override void VisitNamespaceDeclaration(NamespaceDeclarationSyntax node)
       {
          AppendDocComment(node);
-         AppendLine(GetLine(node), $"namespace {node.Name}");
+         AppendLine(GetLine(node), $"namespace {OneLine(node.Name)}");
          AppendLine(node.OpenBraceToken.GetLocation().GetLineSpan().StartLinePosition.Line + 1, "{");
          _indentLevel++;
          base.VisitNamespaceDeclaration(node);
@@ -166,7 +175,7 @@ public class GetFileOutlineTool
       public override void VisitFileScopedNamespaceDeclaration(FileScopedNamespaceDeclarationSyntax node)
       {
          AppendDocComment(node);
-         AppendLine(GetLine(node), $"namespace {node.Name};");
+         AppendLine(GetLine(node), $"namespace {OneLine(node.Name)};");
          _builder.AppendLine();
          base.VisitFileScopedNamespaceDeclaration(node);
       }
@@ -189,21 +198,24 @@ public class GetFileOutlineTool
       public override void VisitUnionDeclaration(UnionDeclarationSyntax node) =>
          VisitTypeDeclaration(node, "union");
 
+      public override void VisitExtensionBlockDeclaration(ExtensionBlockDeclarationSyntax node) =>
+         VisitTypeDeclaration(node, "extension");
+
       public override void VisitEnumDeclaration(EnumDeclarationSyntax node)
       {
          if (!_includePrivate && IsPrivate(node))
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var baseType = node.BaseList != null ? $" : {node.BaseList.Types}" : "";
+         var modifiers = OneLine(node.Modifiers);
+         var baseType = FormatBaseList(node.BaseList);
          AppendLine(GetLine(node), $"{modifiers} enum {node.Identifier}{baseType}".TrimStart());
          AppendLine(node.OpenBraceToken.GetLocation().GetLineSpan().StartLinePosition.Line + 1, "{");
 
          _indentLevel++;
          foreach (var member in node.Members)
          {
-            var value = member.EqualsValue != null ? $" = {member.EqualsValue.Value}" : "";
+            var value = member.EqualsValue != null ? $" = {OneLine(member.EqualsValue.Value)}" : "";
             AppendLine(GetLine(member), $"{member.Identifier}{value},");
          }
          _indentLevel--;
@@ -217,13 +229,16 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var typeParamsStr = node.TypeParameterList?.ToString() ?? "";
-         var paramsStr = node.ParameterList?.ToString() ?? "";
-         var baseListStr = node.BaseList != null ? $" : {node.BaseList.Types}" : "";
-         var constraintsStr = node.ConstraintClauses.Count > 0 ? " " + string.Join(" ", node.ConstraintClauses.Select(c => c.ToString())) : "";
+         var modifiers = OneLine(node.Modifiers);
+         var typeParamsStr = OneLine(node.TypeParameterList);
+         var paramsStr = OneLine(node.ParameterList);
+         var baseListStr = FormatBaseList(node.BaseList);
+         var constraintsStr = FormatConstraints(node.ConstraintClauses);
 
-         var header = $"{modifiers} {keyword} {node.Identifier}{typeParamsStr}{paramsStr}{baseListStr}{constraintsStr}".TrimStart();
+         // An extension block has no name, so its type parameters follow the keyword directly.
+         var nameStr = node.Identifier.IsKind(SyntaxKind.None) ? "" : $" {node.Identifier}";
+
+         var header = $"{modifiers} {keyword}{nameStr}{typeParamsStr}{paramsStr}{baseListStr}{constraintsStr}".TrimStart();
 
          // A declaration without a body, such as a positional record, has no brace tokens to locate.
          if (node.OpenBraceToken.IsKind(SyntaxKind.None))
@@ -252,13 +267,11 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var typeParams = node.TypeParameterList?.ToString() ?? "";
-         var constraints = node.ConstraintClauses.Count > 0
-            ? " " + string.Join(" ", node.ConstraintClauses.Select(c => c.ToString()))
-            : "";
+         var modifiers = OneLine(node.Modifiers);
+         var typeParams = OneLine(node.TypeParameterList);
+         var constraints = FormatConstraints(node.ConstraintClauses);
 
-         AppendLine(GetLine(node), $"{modifiers} {node.ReturnType} {node.Identifier}{typeParams}{node.ParameterList}{constraints};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} {node.Identifier}{typeParams}{OneLine(node.ParameterList)}{constraints};".TrimStart());
       }
 
       public override void VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
@@ -267,10 +280,10 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
+         var modifiers = OneLine(node.Modifiers);
          var initializer = node.Initializer != null ? $" : {node.Initializer.ThisOrBaseKeyword}(...)" : "";
 
-         AppendLine(GetLine(node), $"{modifiers} {node.Identifier}{node.ParameterList}{initializer};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {node.Identifier}{OneLine(node.ParameterList)}{initializer};".TrimStart());
       }
 
       public override void VisitDestructorDeclaration(DestructorDeclarationSyntax node)
@@ -288,15 +301,10 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var accessors = FormatAccessors(node.AccessorList);
+         var modifiers = OneLine(node.Modifiers);
+         var suffix = FormatPropertyBody(node.AccessorList, node.ExpressionBody);
 
-         // Build suffix: either "{ get; set; }" or "=> ...;" or nothing
-         var suffix = !string.IsNullOrEmpty(accessors) ? " " + accessors
-                    : node.ExpressionBody != null ? " => ...;"
-                    : "";
-
-         AppendLine(GetLine(node), $"{modifiers} {node.Type} {node.Identifier}{suffix}".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} {node.Identifier}{suffix}".TrimStart());
       }
 
       public override void VisitIndexerDeclaration(IndexerDeclarationSyntax node)
@@ -305,10 +313,10 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var accessors = FormatAccessors(node.AccessorList);
+         var modifiers = OneLine(node.Modifiers);
+         var suffix = FormatPropertyBody(node.AccessorList, node.ExpressionBody);
 
-         AppendLine(GetLine(node), $"{modifiers} {node.Type} this{node.ParameterList} {accessors}".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} this{OneLine(node.ParameterList)}{suffix}".TrimStart());
       }
 
       public override void VisitEventDeclaration(EventDeclarationSyntax node)
@@ -317,8 +325,8 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         AppendLine(GetLine(node), $"{modifiers} event {node.Type} {node.Identifier} {{ add; remove; }}".TrimStart());
+         var modifiers = OneLine(node.Modifiers);
+         AppendLine(GetLine(node), $"{modifiers} event {OneLine(node.Type)} {node.Identifier} {{ add; remove; }}".TrimStart());
       }
 
       public override void VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
@@ -327,9 +335,9 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
+         var modifiers = OneLine(node.Modifiers);
          var names = string.Join(", ", node.Declaration.Variables.Select(v => v.Identifier.ToString()));
-         AppendLine(GetLine(node), $"{modifiers} event {node.Declaration.Type} {names};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} event {OneLine(node.Declaration.Type)} {names};".TrimStart());
       }
 
       public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
@@ -338,9 +346,9 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
+         var modifiers = OneLine(node.Modifiers);
          var names = string.Join(", ", node.Declaration.Variables.Select(v => v.Identifier.ToString()));
-         AppendLine(GetLine(node), $"{modifiers} {node.Declaration.Type} {names};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Declaration.Type)} {names};".TrimStart());
       }
 
       public override void VisitDelegateDeclaration(DelegateDeclarationSyntax node)
@@ -349,13 +357,11 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         var typeParams = node.TypeParameterList?.ToString() ?? "";
-         var constraints = node.ConstraintClauses.Count > 0
-            ? " " + string.Join(" ", node.ConstraintClauses.Select(c => c.ToString()))
-            : "";
+         var modifiers = OneLine(node.Modifiers);
+         var typeParams = OneLine(node.TypeParameterList);
+         var constraints = FormatConstraints(node.ConstraintClauses);
 
-         AppendLine(GetLine(node), $"{modifiers} delegate {node.ReturnType} {node.Identifier}{typeParams}{node.ParameterList}{constraints};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} delegate {OneLine(node.ReturnType)} {node.Identifier}{typeParams}{OneLine(node.ParameterList)}{constraints};".TrimStart());
       }
 
       public override void VisitOperatorDeclaration(OperatorDeclarationSyntax node)
@@ -364,8 +370,8 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
-         AppendLine(GetLine(node), $"{modifiers} {node.ReturnType} operator {node.OperatorToken}{node.ParameterList};".TrimStart());
+         var modifiers = OneLine(node.Modifiers);
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} operator {node.OperatorToken}{OneLine(node.ParameterList)};".TrimStart());
       }
 
       public override void VisitConversionOperatorDeclaration(ConversionOperatorDeclarationSyntax node)
@@ -374,20 +380,77 @@ public class GetFileOutlineTool
             return;
 
          AppendDocComment(node);
-         var modifiers = node.Modifiers.ToString();
+         var modifiers = OneLine(node.Modifiers);
          var implicitExplicit = node.ImplicitOrExplicitKeyword.ToString();
-         AppendLine(GetLine(node), $"{modifiers} {implicitExplicit} operator {node.Type}{node.ParameterList};".TrimStart());
+         AppendLine(GetLine(node), $"{modifiers} {implicitExplicit} operator {OneLine(node.Type)}{OneLine(node.ParameterList)};".TrimStart());
       }
 
-      private static string FormatAccessors(AccessorListSyntax? accessorList)
-      {
-         if (accessorList == null)
-            return "";
+      private static string FormatBaseList(BaseListSyntax? baseList) =>
+         baseList != null ? " : " + string.Join(", ", baseList.Types.Select(t => OneLine(t))) : "";
 
+      private static string FormatConstraints(SyntaxList<TypeParameterConstraintClauseSyntax> clauses) =>
+         clauses.Count > 0 ? " " + string.Join(" ", clauses.Select(c => OneLine(c))) : "";
+
+      private static string OneLine(SyntaxNode? node) =>
+         node != null ? OneLine(node.DescendantTokens()) : "";
+
+      /// <summary>
+      /// Returns the tokens' source text with the whitespace, line breaks and comments between two tokens replaced by one
+      /// space. No space goes after an opening bracket, before a closing bracket or a comma, or around a dot or <c>::</c>.
+      /// </summary>
+      private static string OneLine(IEnumerable<SyntaxToken> tokens)
+      {
+         var text = new StringBuilder();
+         SyntaxToken? previous = null;
+         foreach (var token in tokens)
+         {
+            if (previous is { } before
+               && (before.HasTrailingTrivia || token.HasLeadingTrivia)
+               && !IsSpaceFreeAfter(before)
+               && !IsSpaceFreeBefore(token))
+            {
+               text.Append(' ');
+            }
+
+            text.Append(token.Text);
+            previous = token;
+         }
+
+         return text.ToString();
+      }
+
+      private static bool IsSpaceFreeAfter(SyntaxToken token) => token.Kind() switch
+      {
+         SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or SyntaxKind.DotToken or SyntaxKind.ColonColonToken => true,
+         SyntaxKind.LessThanToken => IsTypeListAngleBracket(token),
+         _ => false,
+      };
+
+      private static bool IsSpaceFreeBefore(SyntaxToken token) => token.Kind() switch
+      {
+         SyntaxKind.CloseParenToken or SyntaxKind.CloseBracketToken or SyntaxKind.CommaToken or SyntaxKind.DotToken or SyntaxKind.ColonColonToken => true,
+         SyntaxKind.GreaterThanToken => IsTypeListAngleBracket(token),
+         _ => false,
+      };
+
+      // In a constant expression, such as a default parameter value, "<" and ">" compare and keep their spaces.
+      private static bool IsTypeListAngleBracket(SyntaxToken token) =>
+         token.Parent is TypeParameterListSyntax or TypeArgumentListSyntax or FunctionPointerParameterListSyntax;
+
+      private static string FormatPropertyBody(AccessorListSyntax? accessorList, ArrowExpressionClauseSyntax? expressionBody)
+      {
+         if (accessorList != null)
+            return " " + FormatAccessors(accessorList);
+
+         return expressionBody != null ? " => ...;" : "";
+      }
+
+      private static string FormatAccessors(AccessorListSyntax accessorList)
+      {
          var parts = new List<string>();
          foreach (var accessor in accessorList.Accessors)
          {
-            var mods = accessor.Modifiers.ToString();
+            var mods = OneLine(accessor.Modifiers);
             var prefix = string.IsNullOrEmpty(mods) ? "" : mods + " ";
             parts.Add($"{prefix}{accessor.Keyword};");
          }
