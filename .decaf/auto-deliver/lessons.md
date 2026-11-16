@@ -21,3 +21,8 @@
 - A re-review is worth it when a repair round rewrites a message format or a shared path: rok2's second review caught two listed forms that did not round-trip. A test that re-reads every listed candidate turns that claim into a check.
 - When a new test would pin a known defect (a delegate declaration without its signature), fix the defect in scope instead of asserting it.
 - An `Assert.Skip` on "diagnostic not generated" hid a project that loaded with no framework references. MSBuildWorkspace raises no `WorkspaceFailed` for that; check `MetadataReferences` or the corlib instead.
+
+## dotlens-y9u9 / ur5r / fkf7 / pvb8 (2026-11-16)
+- Bug queues grow when each fix files its neighbors. Folding same-tool or same-root findings into the current fix (and grouping the rest by tool) kept the count from 10 to 12 to 11 instead of compounding.
+- Rules about "inside vs outside a declaration" need the full span (doc comment, attributes) and file-path matching; multi-targeted projects give each target its own syntax tree for the same file.
+- A source symbol can have no syntax of its own (generated accessors); any "is this source?" check must fall back to its locations.

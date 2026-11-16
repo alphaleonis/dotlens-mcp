@@ -5,16 +5,11 @@
   "current_phase": null,
   "step": "SELECT",
   "scope": [
-    "dotlens-fp1m",
-    "dotlens-3cdx",
-    "dotlens-mmtc",
-    "dotlens-rok2",
-    "dotlens-9csy",
-    "dotlens-mvyj"
+    "type:bug under dotlens-t76f, including bugs filed during this run"
   ],
   "review_spec": "bugs",
-  "exit": "complete",
-  "started_at": "2026-11-16T13:58:45Z",
-  "updated_at": "2026-11-16T17:43:00Z",
-  "note": "Scope complete 2026-11-16: fp1m 67d2245, 3cdx c7a44eb, mmtc 8de9611, rok2 4d874b0, 9csy 76fc553, mvyj e8451ca. Open questions filed as dotlens-qw76. Follow-up bugs filed outside scope: y9u9, ur5r, fkf7, pvb8, tmdg, piat, k6gs, 1mt4, nvro, 33p3. Branch deliver/dotlens-t76f not pushed; it builds on deliver/dotlens-6wmq."
+  "exit": "escalated",
+  "started_at": "2026-11-16T17:47:57Z",
+  "updated_at": "2026-11-16T20:22:23Z",
+  "note": "Paused at operator request after dotlens-pvb8 (2026-11-16). This run: y9u9 3c55dca, ur5r 614a13a, fkf7 089c1f5, pvb8 (latest). Resume at SELECT with the same goal (all bugs under t76f, including ones filed during the run). Open-question entries wait in the phase reflections (y9u9, pvb8) for the completing run."
 }
