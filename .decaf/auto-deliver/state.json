@@ -2,14 +2,14 @@
   "plan": "dotlens-t76f",
   "tracker": "nibs",
   "integration_branch": "deliver/dotlens-t76f",
-  "current_phase": null,
-  "step": "SELECT",
+  "current_phase": "dotlens-jxhi",
+  "step": "EXECUTE",
   "scope": [
     "type:bug under dotlens-t76f, including bugs filed during this run"
   ],
   "review_spec": "bugs",
-  "exit": "escalated",
+  "exit": "",
   "started_at": "2026-11-16T17:47:57Z",
-  "updated_at": "2026-11-16T20:22:23Z",
-  "note": "Paused at operator request after dotlens-pvb8 (2026-11-16). This run: y9u9 3c55dca, ur5r 614a13a, fkf7 089c1f5, pvb8 (latest). Resume at SELECT with the same goal (all bugs under t76f, including ones filed during the run). Open-question entries wait in the phase reflections (y9u9, pvb8) for the completing run."
+  "updated_at": "2026-11-17T09:53:48Z",
+  "note": "Lap after tmdg (e17a624). Goal: no open bugs under t76f, including ones filed during the run. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature) — surfaced, not adopted. One test process at a time; full suites with --max-threads 8."
 }

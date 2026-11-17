@@ -26,3 +26,11 @@
 - Bug queues grow when each fix files its neighbors. Folding same-tool or same-root findings into the current fix (and grouping the rest by tool) kept the count from 10 to 12 to 11 instead of compounding.
 - Rules about "inside vs outside a declaration" need the full span (doc comment, attributes) and file-path matching; multi-targeted projects give each target its own syntax tree for the same file.
 - A source symbol can have no syntax of its own (generated accessors); any "is this source?" check must fall back to its locations.
+
+## dotlens-tmdg — null-conditional indexer references (2026-11-17)
+- Roslyn 5.12's find-references and find-callers miss or misplace indexers after `?`. `ReferenceSearch` (src/DotLens/Tools/Shared) is now the single entry point for both searches; a new tool that needs references should call it, not `SymbolFinder`.
+- Multi-targeted and linked files give one symbol per project. A scan that supplements Roslyn must scope by every project compiling the declaring file, match copies by documentation ID, and compare paths case-insensitively as `GetDocumentIdsWithFilePath` does. Two re-reviews each found a gap here.
+- `sync_documents` updates one document per path, so linked copies can be stale; never let position alone identify a symbol across copies.
+
+## dotlens-9zjg — sync_documents linked copies (2026-11-17)
+- A stale-copy test must read every copy's text before editing the file: Roslyn loads document text lazily, so an unread copy picks up the new file on first read and the test passes without the fix.
