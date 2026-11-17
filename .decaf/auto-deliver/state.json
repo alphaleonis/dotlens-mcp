@@ -2,14 +2,14 @@
   "plan": "dotlens-t76f",
   "tracker": "nibs",
   "integration_branch": "deliver/dotlens-t76f",
-  "current_phase": "dotlens-jxhi",
-  "step": "EXECUTE",
+  "current_phase": null,
+  "step": "SELECT",
   "scope": [
     "type:bug under dotlens-t76f, including bugs filed during this run"
   ],
   "review_spec": "bugs",
-  "exit": "",
+  "exit": "escalated",
   "started_at": "2026-11-16T17:47:57Z",
-  "updated_at": "2026-11-17T09:53:48Z",
-  "note": "Lap after tmdg (e17a624). Goal: no open bugs under t76f, including ones filed during the run. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature) — surfaced, not adopted. One test process at a time; full suites with --max-threads 8."
+  "updated_at": "2026-11-17T12:41:00Z",
+  "note": "Paused at operator request after dotlens-p6xt (2026-11-17). This run: tmdg e17a624, 9zjg cc318e2, jxhi a530343, p6xt 49df3cd. Resume at SELECT with the same goal (no open bugs under t76f, including ones filed during the run). Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature). Open-question entries wait in the phase reflections (y9u9, pvb8, tmdg, jxhi, p6xt) for the completing run. One test process at a time; full suites with --max-threads 8."
 }

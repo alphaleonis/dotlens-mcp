@@ -34,3 +34,12 @@
 
 ## dotlens-9zjg — sync_documents linked copies (2026-11-17)
 - A stale-copy test must read every copy's text before editing the file: Roslyn loads document text lazily, so an unread copy picks up the new file on first read and the test passes without the fix.
+
+## dotlens-jxhi — sync changes leaking into later writes (2026-11-17)
+- DotLens keeps its own Solution beside the MSBuildWorkspace's; TryApplyChanges diffs against the workspace's, so any in-memory-only change (sync, added file) is re-applied by the next write. UpdateSolution now keeps the two in step.
+- Reviews keep turning up pre-existing bugs next to the fix (12 to 15 open over three bugs); file them grouped by tool so the queue grows by area, not by symptom.
+
+## dotlens-p6xt — using-directive layout (2026-11-17)
+- Rewriting a SyntaxList with WithUsings drops the trivia of removed nodes: file headers, directives and blank lines go with them. A layout helper has to move leading trivia explicitly and treat directives as group boundaries.
+- A parse-without-diagnostics guard in the test helpers (input and output) caught directive placement errors that exact-text assertions alone did not frame.
+- Filtered test runs slowed from seconds to minutes late in the session; check machine load before reading a slow run as a regression.
