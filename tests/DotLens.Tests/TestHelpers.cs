@@ -9,7 +9,7 @@ namespace DotLens.Tests;
 /// </summary>
 public static class TestHelpers
 {
-   private static readonly MetadataReference[] CoreReferences = new[]
+   internal static readonly MetadataReference[] CoreReferences = new[]
    {
         MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
         MetadataReference.CreateFromFile(typeof(Console).Assembly.Location),

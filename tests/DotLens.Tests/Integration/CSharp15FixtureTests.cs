@@ -36,7 +36,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs", "NullConditionalIndexers.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -462,6 +462,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(startPointIsReachable, data.StartPointIsReachable);
    }
 
+
    [Fact]
    public async Task FindReferences_ExtensionIndexer()
    {
@@ -600,9 +601,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       new() { FilePath = _fixture.GetPath("IndexerWrites.cs"), Line = line, Column = column };
 
    private Task AssertIndexerWritesReferencesAsync(string name, params (int Line, int Column, ReferenceKind Kind)[] expected) =>
-      AssertIndexerWritesReferencesAsync(new LookupByName { Name = name }, expected);
+      AssertReferencesAsync("IndexerWrites.cs", new LookupByName { Name = name }, expected);
 
-   private async Task AssertIndexerWritesReferencesAsync(SymbolLookup lookup, params (int Line, int Column, ReferenceKind Kind)[] expected)
+   private Task AssertIndexerWritesReferencesAsync(SymbolLookup lookup, params (int Line, int Column, ReferenceKind Kind)[] expected) =>
+      AssertReferencesAsync("IndexerWrites.cs", lookup, expected);
+
+   private async Task AssertReferencesAsync(string file, SymbolLookup lookup, params (int Line, int Column, ReferenceKind Kind)[] expected)
    {
       var tool = new FindReferencesTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
@@ -610,9 +614,190 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
       var references = result.Data.References ?? throw new InvalidOperationException("Compact verbosity lists references");
       Assert.Equal(
-         expected.Select(e => new ReferenceInfo { FilePath = "IndexerWrites.cs", Line = e.Line, Column = e.Column, Kind = e.Kind }),
+         expected.Select(e => new ReferenceInfo { FilePath = file, Line = e.Line, Column = e.Column, Kind = e.Kind }),
          references.OrderBy(r => r.Line).ThenBy(r => r.Column));
       Assert.Equal(expected.Length, result.Data.TotalReferences);
+   }
+
+   [Fact]
+   public async Task FindReferences_NullConditionalIndexerAssignment_IsWrite()
+   {
+      await AssertNullConditionalReferencesAsync(
+         "Locker.this[]",
+         (79, 14, ReferenceKind.Write),
+         (80, 14, ReferenceKind.Write),
+         (81, 14, ReferenceKind.Write),
+         (82, 20, ReferenceKind.Write),
+         (83, 15, ReferenceKind.Write),
+         (84, 24, ReferenceKind.Write),
+         (85, 20, ReferenceKind.Write),
+         (86, 29, ReferenceKind.Read),
+         (87, 25, ReferenceKind.Read),
+         (88, 26, ReferenceKind.Read),
+         (93, 25, ReferenceKind.Read));
+   }
+
+   /// <summary>
+   /// Line 88 is <c>ward?[1][2]</c> and line 89 is <c>ward?.Self[1]</c>, where the conditional access starts with
+   /// a binding that is not the whole access.
+   /// </summary>
+   [Fact]
+   public async Task FindReferences_NullConditionalIndexer_EachBindingReportsItsOwnIndexer()
+   {
+      await AssertNullConditionalReferencesAsync(
+         "Ward.this[]",
+         (83, 12, ReferenceKind.Read),
+         (84, 20, ReferenceKind.Read),
+         (85, 17, ReferenceKind.Read),
+         (88, 23, ReferenceKind.Read),
+         (89, 27, ReferenceKind.Read));
+   }
+
+   [Fact]
+   public async Task FindReferences_NullConditionalIndexerAssignment_GenericIndexer()
+   {
+      await AssertNullConditionalReferencesAsync("Crate.this[]", (90, 13, ReferenceKind.Write));
+   }
+
+   [Fact]
+   public async Task FindReferences_NullConditionalIndexerAssignment_ExtensionIndexer()
+   {
+      await AssertNullConditionalReferencesAsync(
+         "WardExtensions.this[]",
+         (91, 12, ReferenceKind.Write),
+         (92, 24, ReferenceKind.Read));
+   }
+
+   /// <summary>
+   /// Find-references cascades from an implementation through the interface to the sibling implementation, for a
+   /// null-conditional use as for a direct one.
+   /// </summary>
+   [Theory]
+   [InlineData("IStall.this[]")]
+   [InlineData("Stall.this[]")]
+   public async Task FindReferences_NullConditionalIndexerAssignment_CascadesThroughInterface(string name)
+   {
+      await AssertNullConditionalReferencesAsync(
+         name,
+         (99, 13, ReferenceKind.Write),
+         (100, 13, ReferenceKind.Write),
+         (101, 13, ReferenceKind.Write),
+         (106, 12, ReferenceKind.Write),
+         (107, 12, ReferenceKind.Write),
+         (108, 12, ReferenceKind.Write));
+   }
+
+   [Fact]
+   public async Task FindCallers_NullConditionalIndexerAssignment()
+   {
+      await AssertNullConditionalCallersAsync(
+         "Locker.this[]",
+         ("Use", 79, 14),
+         ("Use", 80, 14),
+         ("Use", 81, 14),
+         ("Use", 82, 20),
+         ("Use", 83, 15),
+         ("Use", 84, 24),
+         ("Use", 85, 20),
+         ("Use", 86, 29),
+         ("Use", 87, 25),
+         ("Use", 88, 26),
+         ("Use", 93, 25));
+   }
+
+   [Fact]
+   public async Task FindCallers_NullConditionalIndexerAssignment_Setter()
+   {
+      await AssertNullConditionalCallersAsync(
+         "Locker.set_Item",
+         ("Use", 79, 14),
+         ("Use", 80, 14),
+         ("Use", 81, 14),
+         ("Use", 82, 20),
+         ("Use", 83, 15),
+         ("Use", 84, 24),
+         ("Use", 85, 20));
+   }
+
+   [Fact]
+   public async Task FindCallers_NullConditionalIndexerAssignment_Getter()
+   {
+      await AssertNullConditionalCallersAsync(
+         "Locker.get_Item",
+         ("Use", 80, 14),
+         ("Use", 81, 14),
+         ("Use", 86, 29),
+         ("Use", 87, 25),
+         ("Use", 88, 26),
+         ("Use", 93, 25));
+   }
+
+   /// <summary>
+   /// Find-callers follows the hierarchy one way only, so an implementation's callers include calls through the
+   /// interface but not calls to the sibling implementation.
+   /// </summary>
+   [Fact]
+   public async Task FindCallers_NullConditionalIndexerAssignment_ImplementationOmitsSibling()
+   {
+      await AssertNullConditionalCallersAsync(
+         "Stall.this[]",
+         ("Rent", 99, 13),
+         ("Rent", 100, 13),
+         ("RentDirectly", 106, 12),
+         ("RentDirectly", 107, 12));
+   }
+
+   [Fact]
+   public async Task FindCallers_NullConditionalIndexerAssignment_InterfaceIncludesImplementations()
+   {
+      await AssertNullConditionalCallersAsync(
+         "IStall.this[]",
+         ("Rent", 99, 13),
+         ("Rent", 100, 13),
+         ("Rent", 101, 13),
+         ("RentDirectly", 106, 12),
+         ("RentDirectly", 107, 12),
+         ("RentDirectly", 108, 12));
+   }
+
+   [Fact]
+   public async Task ChangeImpact_NullConditionalIndexerAssignment_CountsEveryUse()
+   {
+      var tool = new AnalyzeChangeImpactTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.AnalyzeChangeImpactAsync(new LookupByName { Name = "Crate.this[]" }, ChangeType.Delete, cancellationToken: CT);
+
+      Assert.Equal(1, result.Data.ReferenceCount);
+      Assert.Equal([new ImpactLocation { FilePath = "NullConditionalIndexers.cs", Line = 90, Column = 13, IsDefinition = false }], result.Data.ImpactedLocations);
+      Assert.False(result.Data.IsSafe);
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_NullConditionalIndexerAssignment_IndexerNotReported()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equal([(typeof(MethodSymbolResponse), "Empty", 37)], UnusedSymbolsOf(result.Data, "Crate<T>"));
+   }
+
+   private Task AssertNullConditionalReferencesAsync(string name, params (int Line, int Column, ReferenceKind Kind)[] expected) =>
+      AssertReferencesAsync("NullConditionalIndexers.cs", new LookupByName { Name = name }, expected);
+
+   private async Task AssertNullConditionalCallersAsync(string name, params (string Caller, int Line, int Column)[] expected)
+   {
+      var tool = new FindCallersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.FindCallersAsync(new LookupByName { Name = name }, cancellationToken: CT);
+
+      var callers = result.Data.Callers ?? throw new InvalidOperationException("Compact verbosity lists callers");
+      Assert.Equal(
+         expected.Select(e => (e.Caller, "NullConditionalIndexers.cs", e.Line, e.Column)),
+         callers
+            .Select(c => (c.CallingSymbol.Name, c.Location.FilePath, c.Location.Line, c.Location.Column))
+            .OrderBy(c => c.Line).ThenBy(c => c.Column));
+      Assert.Equal(expected.Length, result.Data.TotalCallers);
    }
 
    [Fact]
@@ -1567,6 +1752,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          Location = new SymbolLocation { FilePath = "MultiLineSignatures.cs", Line = 59, Column = 4 },
          ContainingType = "CSharp15TestProject.LedgerExtensions",
       },
+      GridExtensionBlock with
+      {
+         Name = "extension(Ward)",
+         Location = new SymbolLocation { FilePath = "NullConditionalIndexers.cs", Line = 42, Column = 4 },
+         ContainingType = "CSharp15TestProject.WardExtensions",
+      },
       .. RefReceiverExtensionBlocks,
    ];
 
@@ -1831,6 +2022,32 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "MultiLineSignatures.cs:5:8 Count",
       "MultiLineSignatures.cs:63:19 IsEmpty",
       "MultiLineSignatures.cs:8:14 Ledger",
+      "NullConditionalIndexers.cs:104:23 RentDirectly",
+      "NullConditionalIndexers.cs:13:19 Next",
+      "NullConditionalIndexers.cs:16:21 Ward",
+      "NullConditionalIndexers.cs:18:30 _lockers",
+      "NullConditionalIndexers.cs:20:18 this[]",
+      "NullConditionalIndexers.cs:22:16 Self",
+      "NullConditionalIndexers.cs:24:17 Parent",
+      "NullConditionalIndexers.cs:27:21 Crate",
+      "NullConditionalIndexers.cs:29:26 _items",
+      "NullConditionalIndexers.cs:31:14 this[]",
+      "NullConditionalIndexers.cs:37:16 Empty",
+      "NullConditionalIndexers.cs:3:21 Locker",
+      "NullConditionalIndexers.cs:40:21 WardExtensions",
+      "NullConditionalIndexers.cs:42:4 extension(Ward)",
+      "NullConditionalIndexers.cs:44:18 this[]",
+      "NullConditionalIndexers.cs:52:18 IStall",
+      "NullConditionalIndexers.cs:54:8 this[]",
+      "NullConditionalIndexers.cs:57:21 Stall",
+      "NullConditionalIndexers.cs:59:15 this[]",
+      "NullConditionalIndexers.cs:5:28 _slots",
+      "NullConditionalIndexers.cs:66:21 Kiosk",
+      "NullConditionalIndexers.cs:68:15 this[]",
+      "NullConditionalIndexers.cs:75:21 NullConditionalIndexerUsage",
+      "NullConditionalIndexers.cs:77:23 Use",
+      "NullConditionalIndexers.cs:7:16 this[]",
+      "NullConditionalIndexers.cs:97:23 Rent",
       "PrimaryConstructors.cs:12:22 Pair",
       "PrimaryConstructors.cs:12:31 Left",
       "PrimaryConstructors.cs:12:41 Right",
@@ -2412,6 +2629,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             (typeof(ClassSymbolResponse), "SpoolExtensions"),
             (typeof(ClassSymbolResponse), "StaleExtensions"),
             (typeof(ClassSymbolResponse), "TextExtensions"),
+            (typeof(ClassSymbolResponse), "WardExtensions"),
             (typeof(ClassSymbolResponse), "WordExtensions"),
             .. AllExtensionBlocks.Select(b => (typeof(ExtensionSymbolResponse), b.Name)).OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase),
          ],
@@ -2419,7 +2637,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    }
 
    [Theory]
-   [InlineData("extension*", 19)]
+   [InlineData("extension*", 20)]
    [InlineData("extension(ref Meter)", 1)]
    [InlineData("Extension(Grid)", 1)]
    public async Task FindSymbols_ExtensionBlockName_NameMatchesBlockName(string name, int expectedCount)

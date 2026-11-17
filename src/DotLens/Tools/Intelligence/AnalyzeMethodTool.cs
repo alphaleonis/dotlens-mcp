@@ -84,10 +84,7 @@ public class AnalyzeMethodTool
       CancellationToken cancellationToken)
    {
       var solution = _workspaceManager.EnsureSolutionLoaded();
-      var references = await Microsoft.CodeAnalysis.FindSymbols.SymbolFinder.FindReferencesAsync(
-         method, solution, cancellationToken);
-
-      var allLocations = references.SelectMany(r => r.Locations).Where(loc => loc.Location.IsInSource).ToList();
+      var allLocations = await ReferenceSearch.FindReferencesAsync(method, solution, cancellationToken);
       var count = allLocations.Count;
 
       if (verbosity == ToolResultVerbosity.Summary)

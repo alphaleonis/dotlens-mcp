@@ -3,7 +3,6 @@ using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FindSymbols;
 using ModelContextProtocol.Server;
 namespace DotLens.Tools.Intelligence;
 
@@ -41,7 +40,7 @@ public class AnalyzeChangeImpactTool
       var symbol = lookupResult.Symbol;
 
       // Find all references to the symbol
-      var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
+      var references = await ReferenceSearch.FindReferencesAsync(symbol, solution, cancellationToken);
 
       // Get definition locations to check against
       var definitionSpans = symbol.DeclaringSyntaxReferences
@@ -49,7 +48,6 @@ public class AnalyzeChangeImpactTool
          .ToHashSet();
 
       var impactedLocations = references
-         .SelectMany(r => r.Locations)
          .Select(loc =>
          {
             var lineSpan = loc.Location.GetLineSpan();

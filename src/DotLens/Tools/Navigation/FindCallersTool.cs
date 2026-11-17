@@ -3,7 +3,6 @@ using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FindSymbols;
 using ModelContextProtocol.Server;
 namespace DotLens.Tools.Navigation;
 
@@ -72,15 +71,8 @@ public class FindCallersTool
 
       var symbol = lookupResult.Symbol;
 
-      // Find callers
-      var callers = await SymbolFinder.FindCallersAsync(symbol, solution, cancellationToken);
-
-      // Count total call sites
-      var totalCallers = 0;
-      foreach (var caller in callers)
-      {
-         totalCallers += caller.Locations.Count(loc => loc.IsInSource);
-      }
+      var callers = await ReferenceSearch.FindCallersAsync(symbol, solution, cancellationToken);
+      var totalCallers = callers.Sum(caller => caller.Locations.Count);
 
       // Build caller list (respecting maxResults and verbosity)
       var callerList = new List<CallerInfo>();
@@ -90,7 +82,7 @@ public class FindCallersTool
          {
             var callingSymbol = caller.CallingSymbol;
 
-            foreach (var location in caller.Locations.Where(loc => loc.IsInSource))
+            foreach (var location in caller.Locations)
             {
                if (callerList.Count >= maxResults)
                   break;

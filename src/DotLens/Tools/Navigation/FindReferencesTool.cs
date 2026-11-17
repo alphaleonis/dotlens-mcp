@@ -3,7 +3,6 @@ using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FindSymbols;
 using ModelContextProtocol.Server;
 namespace DotLens.Tools.Navigation;
 
@@ -56,12 +55,7 @@ public class FindReferencesTool
       var lookupResult = await _symbolLookup.FindSingleAsync<ISymbol>(target, filter: null, cancellationToken);
       var symbol = lookupResult.Symbol;
 
-      // Find all references
-      var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken: cancellationToken);
-      var allLocations = references
-         .SelectMany(r => r.Locations)
-         .Where(loc => loc.Location.IsInSource)
-         .ToList();
+      var allLocations = await ReferenceSearch.FindReferencesAsync(symbol, solution, cancellationToken);
 
       var totalReferences = allLocations.Count;
 

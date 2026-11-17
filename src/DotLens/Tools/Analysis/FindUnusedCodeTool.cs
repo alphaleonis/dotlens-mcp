@@ -383,10 +383,8 @@ public class FindUnusedCodeTool
    private static async Task<bool> IsUsedOutsideAsync(
       ISymbol symbol, ISymbol owner, Solution solution, CancellationToken cancellationToken)
    {
-      var references = await Microsoft.CodeAnalysis.FindSymbols.SymbolFinder
-         .FindReferencesAsync(symbol, solution, cancellationToken);
-      return references.SelectMany(r => r.Locations)
-         .Any(reference => !IsWithin(owner, reference.Location, cancellationToken));
+      var references = await ReferenceSearch.FindReferencesAsync(symbol, solution, cancellationToken);
+      return references.Any(reference => !IsWithin(owner, reference.Location, cancellationToken));
    }
 
    /// <summary>
