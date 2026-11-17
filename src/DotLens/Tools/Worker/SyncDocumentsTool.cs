@@ -23,13 +23,13 @@ public record SyncError
 /// </summary>
 public record SyncDocumentsResult
 {
-   [Description("Number of existing documents updated with new content from disk.")]
+   [Description("Number of files whose documents were updated with new content from disk.")]
    public required int Updated { get; init; }
 
    [Description("Number of new documents added.")]
    public required int Added { get; init; }
 
-   [Description("Number of documents removed because file was deleted from disk.")]
+   [Description("Number of files whose documents were removed because the file was deleted from disk.")]
    public required int Removed { get; init; }
 
    [Description("Total files processed (Updated + Added + Removed).")]

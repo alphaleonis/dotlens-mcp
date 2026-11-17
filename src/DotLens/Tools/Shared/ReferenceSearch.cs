@@ -219,8 +219,7 @@ internal static class ReferenceSearch
    /// </summary>
    /// <remarks>
    /// Two compilations can each hold their own instance of one symbol, so the documentation IDs decide, within one
-   /// assembly or within one declaration in a file that several projects compile. A linked copy of the file can be
-   /// out of date, so the position alone never decides.
+   /// assembly or within one declaration in a file that several projects compile.
    /// </remarks>
    private static bool IsSameSymbol(ISymbol first, ISymbol second)
    {

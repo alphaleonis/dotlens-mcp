@@ -135,13 +135,8 @@ public class WorkspaceManagerTests : IsolatedProjectTestBase
    [Fact]
    public async Task SyncDocuments_WithAllDocuments_DoesNotThrowOnDuplicatePaths()
    {
-      // This test documents a bug fix: when NuGet packages include source files
-      // (like xunit.v3.core's DefaultRunnerReporters.cs), the same file path can
-      // appear in multiple projects. The sync should handle this gracefully by
-      // taking the first document for each unique path.
-      //
-      // While TestFixtures doesn't have duplicate paths, this test ensures
-      // the sync-all-documents code path works without throwing.
+      // A NuGet package can add a source file to several projects (xunit.v3.core's DefaultRunnerReporters.cs).
+      // TestFixtures has no such path; SyncDocumentsLinkedCopiesTests covers files that several projects compile.
 
       // Act - sync all documents (the code path that builds the path dictionary)
       var result = await WorkspaceManager.SyncDocumentsAsync(null);

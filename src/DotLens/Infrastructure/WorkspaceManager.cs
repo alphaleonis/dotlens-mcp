@@ -123,17 +123,22 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
          var removed = new List<string>();
          var errors = new List<SyncError>();
 
-         // Get all documents in solution for lookup
-         // Use GroupBy + First to handle duplicate paths (can occur when NuGet packages
-         // include source files that appear in multiple projects, e.g., xunit.v3.core)
+         // A path maps to several documents when more than one project compiles the file: a multi-targeted project,
+         // a linked file, or a source file that a NuGet package adds to several projects.
          var pathComparer = PathUtils.PathComparison == StringComparison.OrdinalIgnoreCase
              ? StringComparer.OrdinalIgnoreCase
              : StringComparer.Ordinal;
-         var documentsByPath = solution.Projects
-             .SelectMany(p => p.Documents)
-             .Where(d => d.FilePath != null)
-             .GroupBy(d => Path.GetFullPath(d.FilePath!), pathComparer)
-             .ToDictionary(g => g.Key, g => g.First(), pathComparer);
+         var documentsByPath = new Dictionary<string, List<Document>>(pathComparer);
+         foreach (var document in solution.Projects.SelectMany(p => p.Documents))
+         {
+            if (document.FilePath is not { } filePath)
+               continue;
+
+            var fullPath = Path.GetFullPath(filePath);
+            if (!documentsByPath.TryGetValue(fullPath, out var copies))
+               documentsByPath[fullPath] = copies = [];
+            copies.Add(document);
+         }
 
          // Determine which files to sync
          IEnumerable<string> pathsToSync;
@@ -168,19 +173,19 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
             try
             {
                var fileExists = File.Exists(fullPath);
-               var docExists = documentsByPath.TryGetValue(fullPath, out var existingDoc);
+               documentsByPath.TryGetValue(fullPath, out var copies);
 
-               if (fileExists && docExists)
+               if (fileExists && copies is not null)
                {
-                  // Update existing document - works for any tracked source file (.cs, .razor, .vb, etc.)
-                  var existingText = await existingDoc!.GetTextAsync(cancellationToken);
+                  // Solution.WithDocumentText changes only the documents it is given (pinned by SyncDocuments_LinkedCopies tests).
+                  var existingText = await copies[0].GetTextAsync(cancellationToken);
                   var encoding = existingText.Encoding ?? Encoding.UTF8;
                   var newText = await File.ReadAllTextAsync(fullPath, cancellationToken);
                   var sourceText = SourceText.From(newText, encoding);
-                  solution = solution.WithDocumentText(existingDoc.Id, sourceText);
+                  solution = solution.WithDocumentText(copies.Select(d => d.Id), sourceText);
                   updated.Add(FormatPath(fullPath));
                }
-               else if (fileExists && !docExists)
+               else if (fileExists && copies is null)
                {
                   // File is not a tracked Document in the solution
                   // Don't auto-add - this prevents adding .csproj or other non-source files
@@ -190,10 +195,9 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
                      Error = "File is not a tracked source document in the solution. Use reload_solution to pick up new files."
                   });
                }
-               else if (!fileExists && docExists)
+               else if (!fileExists && copies is not null)
                {
-                  // Remove deleted document
-                  solution = solution.RemoveDocument(existingDoc!.Id);
+                  solution = solution.RemoveDocuments([.. copies.Select(d => d.Id)]);
                   removed.Add(FormatPath(fullPath));
                }
                // else: file doesn't exist and not in solution - nothing to do
