@@ -77,19 +77,12 @@ public class AddUsingTool
             AlreadyExistsHints);
       }
 
-      // Create new using directive with proper spacing
+      var newLine = await UsingDirectiveLayout.GetNewLineAsync(document, cancellationToken);
       var newUsing = SyntaxFactory.UsingDirective(
             SyntaxFactory.ParseName(@namespace).WithLeadingTrivia(SyntaxFactory.Space))
-         .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
+         .WithTrailingTrivia(SyntaxFactory.EndOfLine(newLine));
 
-      // Add to existing usings (sorted)
-      var newUsings = existingUsings.Add(newUsing);
-      var sortedUsings = newUsings
-         .OrderBy(u => u.Name?.ToString()?.StartsWith("System", StringComparison.Ordinal) == true ? 0 : 1)
-         .ThenBy(u => u.Name?.ToString())
-         .ToList();
-
-      var newRoot = compilationUnit.WithUsings(SyntaxFactory.List(sortedUsings));
+      var newRoot = UsingDirectiveLayout.Add(compilationUnit, newUsing, newLine);
       var newText = newRoot.ToFullString();
 
       if (preview)

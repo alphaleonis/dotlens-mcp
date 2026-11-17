@@ -237,24 +237,19 @@ public class OrganizeUsingsTool
 
       var removedCount = originalCount - usingsToKeep.Count;
 
-      // Sort remaining usings (System namespaces first, then alphabetically)
-      var sortedUsings = usingsToKeep
-          .OrderBy(u => u.Name?.ToString().StartsWith("System", StringComparison.Ordinal) == true ? 0 : 1)
-          .ThenBy(u => u.Name?.ToString())
-          .ToList();
-
-      // Create new compilation unit with sorted usings
-      var newRoot = compilationUnit.WithUsings(SyntaxFactory.List(sortedUsings));
+      var newRoot = UsingDirectiveLayout.Organize(compilationUnit, usingsToKeep);
 
       // Create updated document
       var updatedDocument = document.WithSyntaxRoot(newRoot);
 
       // Apply Roslyn formatting to ensure proper formatting/editorconfig is respected
-      var formattedDocument = await Formatter.FormatAsync(updatedDocument, cancellationToken: cancellationToken);
+      var newLine = await UsingDirectiveLayout.GetNewLineAsync(document, cancellationToken);
+      var formattingOptions = (await updatedDocument.GetOptionsAsync(cancellationToken))
+         .WithChangedOption(FormattingOptions.NewLine, newLine);
+      var formattedDocument = await Formatter.FormatAsync(updatedDocument, formattingOptions, cancellationToken);
 
-      // Get final using count (should be same as sortedUsings.Count, but let's be safe)
       var formattedRoot = await formattedDocument.GetSyntaxRootAsync(cancellationToken);
-      var finalCount = (formattedRoot as CompilationUnitSyntax)?.Usings.Count ?? sortedUsings.Count;
+      var finalCount = (formattedRoot as CompilationUnitSyntax)?.Usings.Count ?? usingsToKeep.Count;
 
       return (formattedDocument, originalCount, removedCount, finalCount);
    }
