@@ -46,9 +46,8 @@ public interface IWorkspace : IReadOnlyWorkspace, IDisposable
    bool ApplyChanges(Solution newSolution);
 
    /// <summary>
-   /// Updates the in-memory solution reference without writing to disk.
-   /// Use this only when you need to update the solution state without persisting changes,
-   /// such as after sync_documents or when previewing changes.
+   /// Replaces the in-memory solution without writing it to disk or to the project files.
+   /// A later <see cref="ApplyChanges"/> writes only what differs from this solution.
    /// For applying refactorings, use <see cref="ApplyChanges"/> instead.
    /// </summary>
    void UpdateSolution(Solution newSolution);

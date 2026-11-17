@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -17,6 +18,12 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
 {
    private static readonly string[] LoadSolutionSuggestedTools = ["get_project_structure to see solution structure", "search_symbols to find code", "get_diagnostics to check for issues"];
    private static readonly string[] SyncDocumentsSuggestedTools = ["get_diagnostics to check for errors after sync", "search_symbols to find updated code"];
+
+   // Workspace.SetCurrentSolution is protected, and MSBuildWorkspace is sealed.
+   private static readonly Lazy<Func<Workspace, Solution, Solution>> SetWorkspaceCurrentSolution = new(() =>
+      typeof(Workspace).GetMethod("SetCurrentSolution", BindingFlags.Instance | BindingFlags.NonPublic, [typeof(Solution)])
+         ?.CreateDelegate<Func<Workspace, Solution, Solution>>()
+      ?? throw new InvalidOperationException("Workspace.SetCurrentSolution(Solution) was not found"));
 
    private readonly AsyncLock _writeLock = new();
    private MSBuildWorkspace? _workspace;
@@ -210,10 +217,7 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
 
          // Commit all changes atomically
          if (updated.Count > 0 || added.Count > 0 || removed.Count > 0)
-         {
-            _solution = solution;
-            ResetDocumentCache();
-         }
+            UpdateSolution(solution);
 
          _logger.LogDebug("Sync complete: {Updated} updated, {Added} added, {Removed} removed",
              updated.Count, added.Count, removed.Count);
@@ -517,7 +521,11 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
    public void UpdateSolution(Solution newSolution)
    {
       Debug.Assert(_writeLock.IsHeld, "WriteLock must be held when calling UpdateSolution");
-      _solution = newSolution;
+      if (_workspace == null)
+         throw new InvalidOperationException("No workspace loaded. Call LoadSolutionAsync first.");
+
+      // TryApplyChanges writes every difference from the workspace's current solution, so the workspace holds this one.
+      _solution = SetWorkspaceCurrentSolution.Value(_workspace, newSolution);
       ResetDocumentCache();
    }
 
