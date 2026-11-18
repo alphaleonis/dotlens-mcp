@@ -174,15 +174,16 @@ public class ReferenceSearchTests
       }
       """;
 
-   private static readonly (string Project, int Line, int Column)[] LinkedSites =
+   // Lib(net10.0), Lib(net11.0) and Shared compile one library file, which holds one use.
+   private static readonly (string Site, int Line, int Column)[] LinkedSites =
    [
+      (LibraryFile, 10, 44),
       ("App10", 5, 46),
       ("App11", 5, 46),
-      ("Lib(net10.0)", 10, 44),
-      ("Lib(net11.0)", 10, 44),
-      ("Shared", 10, 44),
       ("SharedApp", 5, 46),
    ];
+
+   private const string LibraryFile = "(library file)";
 
    /// <summary>
    /// Find-references links the indexer across the projects that compile its file, so a search from any of them
@@ -192,7 +193,7 @@ public class ReferenceSearchTests
    [InlineData("Lib(net10.0)")]
    [InlineData("Lib(net11.0)")]
    [InlineData("Shared")]
-   public async Task FindReferences_LinkedIndexer_FindsNullConditionalUsesInEveryLinkedProject(string declaringProject)
+   public async Task FindReferences_LinkedIndexer_FindsEachNullConditionalUseOnce(string declaringProject)
    {
       var solution = await CreateLinkedSolutionAsync(LinkedLibrarySource, LinkedLibrarySource);
 
@@ -201,8 +202,8 @@ public class ReferenceSearchTests
       Assert.Equal(
          LinkedSites,
          references
-            .Select(r => (r.Document.Project.Name, Line(r.Location), Column(r.Location)))
-            .OrderBy(site => site.Name, StringComparer.Ordinal));
+            .Select(r => (Site(r.Document), Line(r.Location), Column(r.Location)))
+            .OrderBy(site => site.Item1, StringComparer.Ordinal));
    }
 
    /// <summary>
@@ -212,16 +213,16 @@ public class ReferenceSearchTests
    [InlineData("Lib(net10.0)")]
    [InlineData("Lib(net11.0)")]
    [InlineData("Shared")]
-   public async Task FindCallers_LinkedIndexer_FindsNullConditionalCallsInEveryLinkedProject(string declaringProject)
+   public async Task FindCallers_LinkedIndexer_FindsEachNullConditionalCallOnce(string declaringProject)
    {
       var solution = await CreateLinkedSolutionAsync(LinkedLibrarySource, LinkedLibrarySource);
 
       var callers = await ReferenceSearch.FindCallersAsync(await GetIndexerAsync(solution, declaringProject, "N.Box", "int"), solution, CT);
 
       Assert.Equal(
-         LinkedSites.Select(site => (site.Project.StartsWith("Lib", StringComparison.Ordinal) || site.Project == "Shared" ? "N.Library.Use(N.Box?)" : $"{site.Project}.Caller.Use(N.Box?)", site.Project, site.Line, site.Column)),
+         LinkedSites.Select(site => (site.Site == LibraryFile ? "N.Library.Use(N.Box?)" : $"{site.Site}.Caller.Use(N.Box?)", site.Site, site.Line, site.Column)),
          callers
-            .SelectMany(c => c.Locations.Select(l => (c.CallingSymbol.ToDisplayString(), solution.GetDocument(l.SourceTree)?.Project.Name ?? "(none)", Line(l), Column(l))))
+            .SelectMany(c => c.Locations.Select(l => (c.CallingSymbol.ToDisplayString(), Site(solution.GetDocument(l.SourceTree)), Line(l), Column(l))))
             .OrderBy(site => site.Item2, StringComparer.Ordinal));
    }
 
@@ -229,18 +230,28 @@ public class ReferenceSearchTests
    /// Shared links the file under a path that differs in letter case only, which the workspace treats as the same file.
    /// </summary>
    [Fact]
-   public async Task FindCallers_LinkedIndexer_PathDiffersInLetterCase_FindsSharedCalls()
+   public async Task FindCallers_LinkedIndexer_PathDiffersInLetterCase_FindsSharedCallsOnce()
    {
       var solution = await CreateLinkedSolutionAsync(LinkedLibrarySource, LinkedLibrarySource, sharedFileName: "LIBRARY.cs");
 
       var callers = await ReferenceSearch.FindCallersAsync(await GetIndexerAsync(solution, "Lib(net10.0)", "N.Box", "int"), solution, CT);
 
       Assert.Equal(
-         LinkedSites.Select(site => site.Project),
+         LinkedSites.Select(site => site.Site),
          callers
-            .SelectMany(c => c.Locations.Select(l => solution.GetDocument(l.SourceTree)?.Project.Name ?? "(none)"))
+            .SelectMany(c => c.Locations.Select(l => Site(solution.GetDocument(l.SourceTree))))
             .Order(StringComparer.Ordinal));
    }
+
+   /// <summary>
+   /// Returns the project of an app's document, which has no path, or <see cref="LibraryFile"/> for the library file.
+   /// </summary>
+   private static string Site(Document? document) => document switch
+   {
+      null => "(none)",
+      { FilePath: null } => document.Project.Name,
+      _ => LibraryFile,
+   };
 
    /// <summary>
    /// The declaring file was changed in Lib(net10.0) only, so Lib(net11.0) and Shared still compile its old text, where

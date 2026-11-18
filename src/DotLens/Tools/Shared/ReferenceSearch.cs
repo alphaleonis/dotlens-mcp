@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace DotLens.Tools.Shared;
@@ -22,15 +23,23 @@ internal sealed record SymbolCallers(ISymbol CallingSymbol, List<Location> Locat
 /// accesses replaced by a scan of the element bindings.
 /// </summary>
 /// <remarks>
+/// <see cref="SymbolFinder"/> reports a use in a file that several projects compile once for each project and each
+/// linked copy of the symbol. Both searches list such a use once, matched by <see cref="SiteComparer"/>.
+/// <para>
 /// <see cref="SymbolFinder"/> matches an indexer against the whole access after the <c>?</c> and reports it at that
 /// access's start. So it misses the indexer in <c>a?[0] = v</c> and <c>a?[0].M()</c>, and reports the indexer of
 /// <c>[1]</c> at the <c>[0]</c> of <c>a?[0][1]</c>. See <see href="https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/Core/Portable/FindSymbols/FindReferences/Finders/PropertySymbolReferenceFinder.cs#L269-L286">ComputeConditionalAccessInformation</see>.
+/// </para>
 /// </remarks>
 internal static class ReferenceSearch
 {
    /// <summary>
    /// Returns the references in source to <paramref name="symbol"/> and to the symbols that find-references cascades to.
    /// </summary>
+   /// <remarks>
+   /// A use in a file that several projects compile is listed once for each symbol that it refers to, with the
+   /// document and definition of the first project that reports it.
+   /// </remarks>
    public static async Task<IReadOnlyList<SourceReference>> FindReferencesAsync(
       ISymbol symbol, Solution solution, CancellationToken cancellationToken)
    {
@@ -54,7 +63,7 @@ internal static class ReferenceSearch
       }
 
       if (indexers.Count == 0)
-         return references;
+         return DistinctReferences(references);
 
       foreach (var binding in await FindIndexerBindingsAsync(solution, indexers, cancellationToken))
       {
@@ -63,8 +72,36 @@ internal static class ReferenceSearch
             references.Add(new SourceReference(definition, binding.Document, binding.Location));
       }
 
-      return references;
+      return DistinctReferences(references);
    }
+
+   private static List<SourceReference> DistinctReferences(List<SourceReference> references)
+   {
+      var definitionsBySite = new Dictionary<Location, List<ISymbol>>(SiteComparer.Instance);
+      var distinct = new List<SourceReference>();
+      foreach (var reference in references)
+      {
+         if (!definitionsBySite.TryGetValue(reference.Location, out var definitions))
+            definitionsBySite[reference.Location] = definitions = [];
+         else if (definitions.Any(definition => IsLinkedCopy(definition, reference.Definition)))
+            continue;
+
+         definitions.Add(reference.Definition);
+         distinct.Add(reference);
+      }
+
+      return distinct;
+   }
+
+   /// <summary>
+   /// Returns whether two symbols are one declaration: the same symbol, or copies of it in projects that compile its file.
+   /// </summary>
+   /// <remarks>
+   /// A local or a parameter has no documentation ID, so its copies match by name and declaration.
+   /// </remarks>
+   private static bool IsLinkedCopy(ISymbol first, ISymbol second) =>
+      IsSameSymbol(first, second)
+      || (first.Kind == second.Kind && first.Name == second.Name && HaveSameDeclaration(first, second));
 
    /// <summary>
    /// Returns the methods, properties and fields whose code refers to <paramref name="symbol"/>, with the references
@@ -74,6 +111,8 @@ internal static class ReferenceSearch
    /// The search follows the inheritance hierarchy one way from <paramref name="symbol"/>, to the members it overrides
    /// or implements and to the members that override or implement it.
    /// For an accessor, a reference counts only when it gets or sets the value with that accessor.
+   /// A use in a file that several projects compile is listed once, under the calling symbol of the first project
+   /// that reports it.
    /// </remarks>
    public static async Task<IReadOnlyList<SymbolCallers>> FindCallersAsync(
       ISymbol symbol, Solution solution, CancellationToken cancellationToken)
@@ -81,13 +120,14 @@ internal static class ReferenceSearch
       var callerInfos = await SymbolFinder.FindCallersAsync(symbol, solution, cancellationToken);
 
       var callers = new List<SymbolCallers>();
+      var sites = new HashSet<Location>(SiteComparer.Instance);
       foreach (var callerInfo in callerInfos)
       {
          var isIndexer = GetIndexer(callerInfo.CalledSymbol) is not null;
          var locations = new List<Location>();
          foreach (var location in callerInfo.Locations)
          {
-            if (location.IsInSource && !(isIndexer && await IsAtBindingAsync(location, cancellationToken)))
+            if (location.IsInSource && !(isIndexer && await IsAtBindingAsync(location, cancellationToken)) && sites.Add(location))
                locations.Add(location);
          }
 
@@ -103,7 +143,7 @@ internal static class ReferenceSearch
       foreach (var binding in await FindIndexerBindingsAsync(solution, [target, .. targetBases], cancellationToken))
       {
          var bound = await FindCalledIndexerAsync(binding, target, baseMembers, solution, cancellationToken);
-         if (bound is null || (symbol is IMethodSymbol accessor && !UsesAccessor(binding.Syntax, bound, accessor)))
+         if (bound is null || (symbol is IMethodSymbol accessor && !UsesAccessor(binding.Syntax, bound, accessor)) || !sites.Add(binding.Location))
             continue;
 
          if (GetCallingSymbol(binding.Model, binding.Syntax.SpanStart, cancellationToken) is not { } callingSymbol)
@@ -117,6 +157,33 @@ internal static class ReferenceSearch
       }
 
       return callers;
+   }
+
+   /// <summary>
+   /// Compares source locations as uses: the same span of one file, in any project that compiles the file.
+   /// </summary>
+   /// <remarks>
+   /// Paths compare ignoring letter case, as in <see cref="HaveSameDeclaration"/>. A location in a document without a
+   /// path matches only locations in the same syntax tree.
+   /// </remarks>
+   private sealed class SiteComparer : IEqualityComparer<Location>
+   {
+      public static readonly SiteComparer Instance = new();
+
+      public bool Equals(Location? first, Location? second) =>
+         ReferenceEquals(first, second)
+         || (first is not null
+            && second is not null
+            && first.SourceSpan == second.SourceSpan
+            && (first.SourceTree == second.SourceTree
+               || (first.SourceTree is { FilePath.Length: > 0 } tree
+                  && string.Equals(tree.FilePath, second.SourceTree?.FilePath, StringComparison.OrdinalIgnoreCase))));
+
+      public int GetHashCode(Location location) => HashCode.Combine(
+         location.SourceSpan,
+         location.SourceTree is { FilePath.Length: > 0 } tree
+            ? StringComparer.OrdinalIgnoreCase.GetHashCode(tree.FilePath)
+            : RuntimeHelpers.GetHashCode(location.SourceTree));
    }
 
    private sealed record IndexerBinding(

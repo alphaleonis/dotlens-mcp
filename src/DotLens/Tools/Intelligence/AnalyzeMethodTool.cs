@@ -107,7 +107,8 @@ public class AnalyzeMethodTool
             FilePath = _workspaceManager.FormatPath(lineSpan.Path),
             Line = lineSpan.StartLinePosition.Line + 1,
             Column = lineSpan.StartLinePosition.Character + 1,
-            LineText = lineText
+            LineText = lineText,
+            IsGenerated = loc.Document is SourceGeneratedDocument
          });
       }
 

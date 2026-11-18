@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Shared;
@@ -59,7 +60,8 @@ public class AnalyzeChangeImpactTool
                FilePath = _workspace.FormatPath(lineSpan.Path) ?? lineSpan.Path,
                Line = lineSpan.StartLinePosition.Line + 1,
                Column = lineSpan.StartLinePosition.Character + 1,
-               IsDefinition = isDefinition
+               IsDefinition = isDefinition,
+               IsGenerated = loc.Document is SourceGeneratedDocument
             };
          })
          .ToList();
@@ -146,4 +148,8 @@ public record ImpactLocation : SymbolLocation
 
    [Description("Whether this location is the symbol definition (vs a reference).")]
    public required bool IsDefinition { get; init; }
+
+   [Description("Whether this location is in a source-generated document.")]
+   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+   public bool IsGenerated { get; init; }
 }

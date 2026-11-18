@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The LibraryImport generator emits unsafe code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- RefAndAttributeWrites.cs passes ref to an in parameter to pin how that use is classified. -->
+    <NoWarn>$(NoWarn);CS9191</NoWarn>
+  </PropertyGroup>
+
+  <!-- The LibraryImport generator writes different code for each target framework, so one target holds the generated uses. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net11.0'">
+    <Compile Remove="GeneratedUses.cs" />
+  </ItemGroup>
+
+</Project>

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 
 namespace DotLens.Tools.Shared;
 
@@ -39,6 +40,10 @@ public record ReferenceInfo
    public required int Column { get; init; }
    public string? LineText { get; init; }
    public required ReferenceKind Kind { get; init; }
+
+   [Description("Whether the reference is in a source-generated document.")]
+   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+   public bool IsGenerated { get; init; }
 }
 
 /// <summary>
@@ -70,6 +75,10 @@ public record CallerLocationInfo
    public required int Line { get; init; }
    public required int Column { get; init; }
    public string? LineText { get; init; }
+
+   [Description("Whether the call is in a source-generated document.")]
+   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+   public bool IsGenerated { get; init; }
 }
 
 /// <summary>

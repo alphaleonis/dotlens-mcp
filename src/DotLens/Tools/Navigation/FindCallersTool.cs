@@ -106,7 +106,8 @@ public class FindCallersTool
                      FilePath = _workspace.FormatPath(callerDocument.FilePath),
                      Line = lineSpan.StartLinePosition.Line + 1,
                      Column = lineSpan.StartLinePosition.Character + 1,
-                     LineText = lineText
+                     LineText = lineText,
+                     IsGenerated = callerDocument is SourceGeneratedDocument
                   }
                });
             }

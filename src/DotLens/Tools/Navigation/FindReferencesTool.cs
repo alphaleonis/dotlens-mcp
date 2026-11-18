@@ -3,6 +3,7 @@ using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Operations;
 using ModelContextProtocol.Server;
 namespace DotLens.Tools.Navigation;
 
@@ -66,8 +67,8 @@ public class FindReferencesTool
          referenceList = [];
          foreach (var loc in allLocations.Take(maxResults))
          {
-            var refDocument = solution.GetDocument(loc.Document.Id);
-            if (refDocument?.FilePath == null)
+            var refDocument = loc.Document;
+            if (refDocument.FilePath == null)
                continue;
 
             var refTree = await refDocument.GetSyntaxTreeAsync(cancellationToken);
@@ -78,9 +79,9 @@ public class FindReferencesTool
             var lineSpan = refTree.GetLineSpan(refSpan, cancellationToken);
 
             var refRoot = await refTree.GetRootAsync(cancellationToken);
-            // ClassifyReference widens from the reference's own node, not from a same-span wrapper such as an argument.
+            // ClassifyReferenceAsync widens from the reference's own node, not from a same-span wrapper such as an argument.
             var refNode = refRoot.FindNode(refSpan, getInnermostNodeForTie: true);
-            var kind = ClassifyReference(refNode);
+            var kind = await ClassifyReferenceAsync(refNode, refDocument, cancellationToken);
 
             string? lineText = null;
             if (verbosity == ToolResultVerbosity.Full)
@@ -95,7 +96,8 @@ public class FindReferencesTool
                Line = lineSpan.StartLinePosition.Line + 1,
                Column = lineSpan.StartLinePosition.Character + 1,
                LineText = lineText,
-               Kind = kind
+               Kind = kind,
+               IsGenerated = refDocument is SourceGeneratedDocument
             });
          }
       }
@@ -132,7 +134,7 @@ public class FindReferencesTool
    /// <summary>
    /// Classifies a reference as Read, Write, or Call based on its syntax context.
    /// </summary>
-   private static ReferenceKind ClassifyReference(SyntaxNode node)
+   private static async Task<ReferenceKind> ClassifyReferenceAsync(SyntaxNode node, Document document, CancellationToken cancellationToken)
    {
       var parent = node.Parent;
 
@@ -151,7 +153,7 @@ public class FindReferencesTool
       if (IsWithinObjectCreationType(node))
          return ReferenceKind.Call;
 
-      return IsWrittenTo(GetAccessExpression(node)) ? ReferenceKind.Write : ReferenceKind.Read;
+      return await IsWrittenToAsync(GetAccessExpression(node), document, cancellationToken) ? ReferenceKind.Write : ReferenceKind.Read;
    }
 
    /// <summary>
@@ -179,31 +181,92 @@ public class FindReferencesTool
    }
 
    /// <summary>
-   /// Returns whether <paramref name="access"/> is assigned, incremented, decremented, deconstructed into,
-   /// or passed as a <c>ref</c> or <c>out</c> argument.
+   /// Returns whether <paramref name="access"/> is assigned, incremented, decremented, deconstructed into, passed to a
+   /// <c>ref</c> or <c>out</c> parameter, taken by a writable reference, or set by an attribute's named argument.
    /// </summary>
    /// <remarks>
    /// A compound assignment such as <c>+=</c> counts as a write, because <see cref="ReferenceKind"/> has no
-   /// read-write kind. A member initializer with a nested initializer, such as <c>Items = { 1 }</c>, reads the
-   /// member.
+   /// read-write kind. A writable reference counts as a write for the same reason, as code can write through it later.
+   /// A member initializer with a nested initializer, such as <c>Items = { 1 }</c>, reads the member.
    /// </remarks>
-   private static bool IsWrittenTo(SyntaxNode access)
+   private static async Task<bool> IsWrittenToAsync(SyntaxNode access, Document document, CancellationToken cancellationToken)
    {
       switch (access.Parent)
       {
+         case NameEqualsSyntax { Parent: AttributeArgumentSyntax }:
+            return true;
+         case RefExpressionSyntax refExpression:
+            return await IsWritableReferenceAsync(refExpression, document, cancellationToken);
          case AssignmentExpressionSyntax assignment when assignment.Left == access:
             return assignment.Right is not InitializerExpressionSyntax;
          case PostfixUnaryExpressionSyntax postfix:
             return postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression;
          case PrefixUnaryExpressionSyntax prefix:
             return prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression;
-         case ArgumentSyntax { RefKindKeyword.RawKind: (int)SyntaxKind.OutKeyword or (int)SyntaxKind.RefKeyword }:
-            return true;
+         case ArgumentSyntax { RefKindKeyword.RawKind: (int)SyntaxKind.OutKeyword or (int)SyntaxKind.RefKeyword } argument:
+            return await IsWritableArgumentAsync(argument, document, cancellationToken);
          case ArgumentSyntax { Parent: TupleExpressionSyntax tuple }:
             return IsDeconstructionTarget(tuple);
          default:
             return false;
       }
+   }
+
+   /// <summary>
+   /// Returns whether the reference that <paramref name="refExpression"/> takes allows writes: it goes to a ref local,
+   /// ref field or ref parameter that is not readonly, to a <c>ref</c> or <c>out</c> parameter, or out of a member that
+   /// returns by writable reference.
+   /// </summary>
+   private static async Task<bool> IsWritableReferenceAsync(
+      RefExpressionSyntax refExpression, Document document, CancellationToken cancellationToken)
+   {
+      // A branch of a ref conditional hands its reference to the context of the whole conditional.
+      SyntaxNode taken = refExpression;
+      while (taken.Parent is ParenthesizedExpressionSyntax or RefExpressionSyntax
+         || (taken.Parent is ConditionalExpressionSyntax conditional && conditional.Condition != taken))
+         taken = taken.Parent;
+
+      if (taken.Parent is ArgumentSyntax argument)
+         return await IsWritableArgumentAsync(argument, document, cancellationToken);
+
+      if (await document.GetSemanticModelAsync(cancellationToken) is not { } model)
+         return false;
+
+      var receiver = taken.Parent switch
+      {
+         EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } => model.GetDeclaredSymbol(declarator, cancellationToken),
+         AssignmentExpressionSyntax assignment when assignment.Right == taken => model.GetSymbolInfo(assignment.Left, cancellationToken).Symbol,
+         ReturnStatementSyntax or ArrowExpressionClauseSyntax or LambdaExpressionSyntax => model.GetEnclosingSymbol(taken.SpanStart, cancellationToken),
+         _ => null,
+      };
+      return receiver switch
+      {
+         ILocalSymbol local => local.RefKind == RefKind.Ref,
+         IFieldSymbol field => field.RefKind == RefKind.Ref,
+         IParameterSymbol parameter => parameter.RefKind is RefKind.Ref or RefKind.Out,
+         IMethodSymbol method => method.RefKind == RefKind.Ref,
+         IPropertySymbol property => property.RefKind == RefKind.Ref,
+         _ => false,
+      };
+   }
+
+   /// <summary>
+   /// Returns whether <paramref name="argument"/> passes a reference that the callee can write through, to a
+   /// <c>ref</c> or <c>out</c> parameter.
+   /// </summary>
+   /// <remarks>
+   /// The parameter decides, because <c>ref</c> may also pass to an <c>in</c> or <c>ref readonly</c> parameter. An
+   /// argument that binds to no parameter counts as a write when it has the <c>ref</c> or <c>out</c> keyword.
+   /// </remarks>
+   private static async Task<bool> IsWritableArgumentAsync(ArgumentSyntax argument, Document document, CancellationToken cancellationToken)
+   {
+      var hasWritableKeyword = argument.RefKindKeyword.Kind() is SyntaxKind.RefKeyword or SyntaxKind.OutKeyword;
+      if (!hasWritableKeyword || await document.GetSemanticModelAsync(cancellationToken) is not { } model)
+         return hasWritableKeyword;
+
+      return model.GetOperation(argument, cancellationToken) is IArgumentOperation { Parameter: { } parameter }
+         ? parameter.RefKind is RefKind.Ref or RefKind.Out
+         : hasWritableKeyword;
    }
 
    /// <summary>
