@@ -9,16 +9,9 @@
   ],
   "review_spec": "bugs",
   "started_at": "2026-11-16T17:47:57Z",
-  "updated_at": "2026-11-18T19:43:25Z",
-  "note": "Run resumed 2026-11-18 by operator. Earlier: tmdg e17a624, 9zjg cc318e2, jxhi a530343, p6xt 49df3cd; this session: c293 5de4d65, 4cfl 3f6876a, zwvv c9443a7, c5qn f7cabe9, k6gs+1mt4 a2f0f5a, cr8j+6nks+piat baaf4c9. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature). Open-question entries wait in the phase reflections. One test process at a time; full suites with --max-threads 8. 2026-11-18: operator asked to regroup remaining bugs by area (one implementer, one review loop and one commit per group; groups in state.groups) and to run the full suite once per bug/group, by the conductor only.",
+  "updated_at": "2026-11-18T20:59:56Z",
+  "note": "Run resumed 2026-11-18 by operator. Earlier: tmdg e17a624, 9zjg cc318e2, jxhi a530343, p6xt 49df3cd; this session: c293 5de4d65, 4cfl 3f6876a, zwvv c9443a7, c5qn f7cabe9, nvro+b6ue 9022e6f, k6gs+1mt4 a2f0f5a, cr8j+6nks+piat baaf4c9. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature). Open-question entries wait in the phase reflections. One test process at a time; full suites with --max-threads 8. 2026-11-18: operator asked to regroup remaining bugs by area (one implementer, one review loop and one commit per group; groups in state.groups) and to run the full suite once per bug/group, by the conductor only.",
   "groups": [
-    {
-      "area": "declaration display (signatures, file outline)",
-      "ids": [
-        "dotlens-nvro",
-        "dotlens-b6ue"
-      ]
-    },
     {
       "area": "WorkspaceManager (load diagnostics, write recovery)",
       "ids": [

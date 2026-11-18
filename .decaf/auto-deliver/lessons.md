@@ -70,3 +70,7 @@
 ## Symbol lookup group — k6gs, 1mt4 (2026-11-18)
 - Identity rules for "same symbol" are the regression magnet: each round fixed one case and broke another (cross-project hiding, BCL duplicates per framework, linked files). Enumerate the identity cases first (same declaration in several projects, same name in different declarations, source vs metadata copy, framework builds) and test all of them before choosing a key.
 - A string minimum over "PATH:offset" orders offsets as text; compare structured keys.
+
+## Declaration display group — nvro, b6ue (2026-11-18)
+- Folding an implementer's out-of-scope finding into the fix round is cheap only when it is small: the folded type-declaration work (base lists, constructed generics, metadata interfaces) caused every regression the later reviews found. Fold mechanical leftovers; file design-sized ones.
+- Metadata lists a base class's interface on a derived type only when the derived type re-implements it; filtering by the base's AllInterfaces hides real declarations.
