@@ -138,7 +138,7 @@ public class EditFileTool
       var newSourceText = sourceText.WithChanges(textChanges);
       var newSolution = solution.WithDocumentText(document.Id, newSourceText);
 
-      if (!_workspace.ApplyChanges(newSolution))
+      if (!_workspace.ApplyChanges(newSolution, cancellationToken))
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,

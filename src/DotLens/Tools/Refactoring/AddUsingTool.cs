@@ -140,7 +140,7 @@ public class AddUsingTool
 
       // Apply changes
       var newSolution = solution.WithDocumentSyntaxRoot(document.Id, newRoot);
-      if (!_workspaceManager.ApplyChanges(newSolution))
+      if (!_workspaceManager.ApplyChanges(newSolution, cancellationToken))
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,

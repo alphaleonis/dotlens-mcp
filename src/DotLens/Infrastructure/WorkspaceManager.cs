@@ -1,7 +1,10 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Text;
@@ -42,6 +45,9 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
    private readonly ILogger<WorkspaceManager> _logger;
    private readonly DotLensOptions _options;
    private DateTime? _solutionLoadedAt;
+   private IReadOnlyList<LoadWarning> _loadWarnings = [];
+   private readonly Lock _workspaceDiagnosticsLock = new();
+   private List<WorkspaceDiagnostic>? _workspaceDiagnostics;
 
    public WorkspaceManager(ILogger<WorkspaceManager> logger, IOptions<DotLensOptions> options)
    {
@@ -71,6 +77,12 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
    public int TimeoutSeconds => _options.TimeoutSeconds;
    public int MaxSortableResults => _options.MaxSortableResults;
    public AsyncLock WriteLock => _writeLock;
+   public IReadOnlyList<LoadWarning> LoadWarnings => _loadWarnings;
+
+   /// <summary>
+   /// Gets the MSBuildWorkspace's current solution, which every write leaves the same as <see cref="Solution"/>.
+   /// </summary>
+   internal Solution? WorkspaceSolution => _workspace?.CurrentSolution;
 
    public async Task<ToolResult<WorkerLoadSolutionResult>> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default)
    {
@@ -90,28 +102,47 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
          // Dispose existing workspace
          _workspace?.Dispose();
          ResetDocumentCache();
+         _loadWarnings = [];
 
          _workspace = MSBuildWorkspace.Create();
          _workspace.RegisterWorkspaceFailedHandler(args =>
          {
             _logger.LogWarning("Workspace warning: {Message}", args.Diagnostic.Message);
+            lock (_workspaceDiagnosticsLock)
+               _workspaceDiagnostics?.Add(args.Diagnostic);
          });
 
-         _solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+         CollectWorkspaceDiagnostics();
+         try
+         {
+            _solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+         }
+         finally
+         {
+            _loadWarnings = [.. TakeWorkspaceDiagnostics()
+               .Select(d => new LoadWarning($"{d.Kind}: {d.Message}", null))];
+         }
+
+         _solution = SweepPlaceholders(_workspace, _solution);
          _solutionLoadedAt = DateTime.UtcNow;
+         var frameworkWarnings = await FindProjectsWithoutFrameworkReferencesAsync(_solution, cancellationToken);
+         _loadWarnings = [.. _loadWarnings, .. frameworkWarnings];
 
          var projectCount = _solution.ProjectIds.Count;
          var documentCount = _solution.Projects.Sum(p => p.DocumentIds.Count);
 
          _logger.LogInformation("Solution loaded: {Projects} projects, {Documents} documents",
              projectCount, documentCount);
+         foreach (var warning in _loadWarnings)
+            _logger.LogWarning("Load warning: {Message}", warning.Message);
 
          return ToolResult.Create(
              new WorkerLoadSolutionResult
              {
                 SolutionPath = solutionPath,
                 ProjectCount = projectCount,
-                DocumentCount = documentCount
+                DocumentCount = documentCount,
+                Warnings = [.. _loadWarnings.Select(w => w.Message)]
              },
              suggestedNextTools: LoadSolutionSuggestedTools
          );
@@ -298,7 +329,8 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
                Documents = documentCount,
                LoadedAt = _solutionLoadedAt?.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
                Errors = errorCount,
-               Warnings = warningCount
+               Warnings = warningCount,
+               LoadWarnings = [.. _loadWarnings.Select(w => w.Message)]
             },
             Workspace = new WorkspaceInfo
             {
@@ -410,12 +442,14 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       return await RoslynHelpers.FindTypeWithCompilationAsync(_solution!, typeName, requireFullyQualifiedName, projectName, cancellationToken);
    }
 
-   public bool ApplyChanges(Solution newSolution)
+   public bool ApplyChanges(Solution newSolution, CancellationToken cancellationToken)
    {
       Debug.Assert(_writeLock.IsHeld, "WriteLock must be held when calling ApplyChanges");
 
       if (_workspace == null)
          throw new InvalidOperationException("No workspace loaded. Call LoadSolutionAsync first.");
+
+      cancellationToken.ThrowIfCancellationRequested();
 
       // MSBuildWorkspace deletes a removed file that another project still compiles, its project file edit throws on
       // an item that an SDK glob adds, and it lists an added file that the glob already includes. So the workspace
@@ -424,23 +458,50 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       var currentSolution = _workspace.CurrentSolution;
       // The server ends a forwarded request after TimeoutSeconds (ForwardingMcpServerToolExtensions). Evaluations get
       // half of it, so the rest of the write has time left; every evaluation runs before anything is written.
-      var plan = DocumentChangePlan.Create(currentSolution, newSolution, FormatPath, TimeSpan.FromSeconds(_options.TimeoutSeconds / 2.0));
-      var stagedSolution = currentSolution;
-      if (plan.RemovedDocumentIds.Count > 0)
+      var evaluationBudget = TimeSpan.FromSeconds(_options.TimeoutSeconds / 2.0);
+      var plan = DocumentChangePlan.Create(currentSolution, newSolution, FormatPath, evaluationBudget, cancellationToken);
+      var stagedSolution = plan.RemovedDocumentIds.Count > 0
+         ? currentSolution.RemoveDocuments([.. plan.RemovedDocumentIds])
+         : currentSolution;
+      FileSnapshot snapshot;
+      try
       {
-         stagedSolution = currentSolution.RemoveDocuments([.. plan.RemovedDocumentIds]);
-         WorkspaceLatestSolution.Value.SetValue(_workspace, stagedSolution);
+         snapshot = FileSnapshot.Take(FilesTheWorkspaceWrites(stagedSolution, newSolution));
+      }
+      catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+      {
+         throw new ToolException(
+            ErrorCodes.ApplyChangesFailed,
+            $"The workspace could not apply the changes, because a file it writes could not be read first: {ex.Message}",
+            "Fix the cause, then try again.");
       }
 
-      bool success = false;
+      // Past this point the write runs to its end, so the disk and both solutions agree when it returns.
+      cancellationToken.ThrowIfCancellationRequested();
+
+      if (stagedSolution != currentSolution)
+         WorkspaceLatestSolution.Value.SetValue(_workspace, stagedSolution);
+
+      // MSBuildWorkspace reports some failed writes as WorkspaceFailed events and continues, and others it throws.
+      // https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/MSBuild/Core/MSBuild/MSBuildWorkspace.cs#L514-L534
+      bool success;
+      Exception? exception = null;
+      CollectWorkspaceDiagnostics();
       try
       {
          success = _workspace.TryApplyChanges(newSolution);
       }
-      finally
+      catch (Exception ex)
       {
-         if (!success && stagedSolution != currentSolution && ReferenceEquals(_workspace.CurrentSolution, stagedSolution))
-            WorkspaceLatestSolution.Value.SetValue(_workspace, currentSolution);
+         success = false;
+         exception = ex;
+      }
+
+      var failures = TakeWorkspaceDiagnostics().Where(d => d.Kind == WorkspaceDiagnosticKind.Failure).ToList();
+      if (exception is not null || failures.Count > 0)
+      {
+         var cause = exception?.Message ?? string.Join(" ", failures.Select(d => d.Message));
+         RollBack(_workspace, currentSolution, snapshot, cause, exception);
       }
 
       if (success)
@@ -452,9 +513,13 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       }
       else
       {
+         // TryApplyChanges returns false only before it writes anything.
+         // https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/Core/Portable/Workspace/Workspace.cs#L1525-L1548
+         WorkspaceLatestSolution.Value.SetValue(_workspace, currentSolution);
+
          // Log diagnostic information when TryApplyChanges fails
          // Note: Roslyn's TryApplyChanges doesn't provide failure details, so we log what was attempted
-         var changes = newSolution.GetChanges(_workspace.CurrentSolution);
+         var changes = newSolution.GetChanges(currentSolution);
          var addedDocs = changes.GetProjectChanges().SelectMany(pc => pc.GetAddedDocuments()).Count();
          var removedDocs = changes.GetProjectChanges().SelectMany(pc => pc.GetRemovedDocuments()).Count();
          var changedDocs = changes.GetProjectChanges().SelectMany(pc => pc.GetChangedDocuments()).Count();
@@ -466,6 +531,84 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       }
 
       return success;
+   }
+
+   /// <summary>
+   /// Returns both solutions to the one before a failed write, and writes back the files that the workspace wrote.
+   /// </summary>
+   /// <exception cref="ToolException">Always, with the cause and each file that could not be restored.</exception>
+   [DoesNotReturn]
+   private void RollBack(
+      MSBuildWorkspace workspace, Solution solution, FileSnapshot snapshot, string cause, Exception? exception)
+   {
+      WorkspaceLatestSolution.Value.SetValue(workspace, solution);
+      _solution = solution;
+      ResetDocumentCache();
+
+      var (restored, restoreFailures) = snapshot.Restore(FormatPath);
+      _logger.LogWarning(exception, "TryApplyChanges failed: {Cause}", cause);
+      if (restoreFailures.Count > 0)
+      {
+         throw new ToolException(
+            ErrorCodes.ApplyChangesFailed,
+            "The workspace could not apply the changes, and these files could not be restored: "
+               + $"{string.Join("; ", restoreFailures)}. The cause: {cause}",
+            "Restore the files on disk, then call reload_solution.");
+      }
+
+      throw new ToolException(
+         ErrorCodes.ApplyChangesFailed,
+         restored > 0
+            ? $"The workspace could not apply the changes, so DotLens restored the files it had written: {cause}"
+            : $"The workspace could not apply the changes and left every file unchanged: {cause}",
+         "Fix the cause, then try again.");
+   }
+
+   /// <summary>
+   /// Returns the files that MSBuildWorkspace.TryApplyChanges can write when it applies the change.
+   /// </summary>
+   /// <remarks>
+   /// They are the changed documents and additional documents, the files of added documents, and the project file of
+   /// each project with a change that MSBuildWorkspace writes to it.
+   /// https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/MSBuild/Core/MSBuild/MSBuildWorkspace.cs#L293-L303
+   /// </remarks>
+   internal static IEnumerable<string> FilesTheWorkspaceWrites(Solution oldSolution, Solution newSolution)
+   {
+      foreach (var changes in newSolution.GetChanges(oldSolution).GetProjectChanges())
+      {
+         var oldProject = changes.OldProject;
+         foreach (var id in changes.GetChangedDocuments())
+         {
+            if (oldProject.GetDocument(id)?.FilePath is { } path)
+               yield return path;
+         }
+
+         foreach (var id in changes.GetChangedAdditionalDocuments())
+         {
+            if (oldProject.GetAdditionalDocument(id)?.FilePath is { } path)
+               yield return path;
+         }
+
+         if (oldProject.FilePath is not { } projectPath)
+            continue;
+
+         foreach (var id in changes.GetAddedDocuments())
+         {
+            if (changes.NewProject.GetDocument(id) is { } document
+               && DocumentChangePlan.WorkspaceAddedPath(document, projectPath) is { } path)
+            {
+               yield return path;
+            }
+         }
+
+         if (changes.GetAddedDocuments().Any() || changes.GetRemovedDocuments().Any()
+            || changes.GetAddedMetadataReferences().Any() || changes.GetRemovedMetadataReferences().Any()
+            || changes.GetAddedProjectReferences().Any() || changes.GetRemovedProjectReferences().Any()
+            || changes.GetAddedAnalyzerReferences().Any() || changes.GetRemovedAnalyzerReferences().Any())
+         {
+            yield return projectPath;
+         }
+      }
    }
 
    public async Task<Document> AddDocumentAsync(string filePath, string content, CancellationToken cancellationToken = default)
@@ -561,6 +704,134 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       _solution = SetWorkspaceCurrentSolution.Value(_workspace, newSolution);
       ResetDocumentCache();
    }
+
+   private void CollectWorkspaceDiagnostics()
+   {
+      lock (_workspaceDiagnosticsLock)
+         _workspaceDiagnostics = [];
+   }
+
+   /// <returns>The diagnostics that the workspace reported since <see cref="CollectWorkspaceDiagnostics"/>.</returns>
+   private List<WorkspaceDiagnostic> TakeWorkspaceDiagnostics()
+   {
+      lock (_workspaceDiagnosticsLock)
+      {
+         var diagnostics = _workspaceDiagnostics ?? [];
+         _workspaceDiagnostics = null;
+         return diagnostics;
+      }
+   }
+
+   /// <summary>
+   /// Deletes the placeholders that an interrupted write left in the solution's projects, and their documents.
+   /// </summary>
+   /// <returns>The solution without the documents of the deleted placeholders.</returns>
+   private Solution SweepPlaceholders(MSBuildWorkspace workspace, Solution solution)
+   {
+      if (Path.GetDirectoryName(solution.FilePath) is not { } solutionDirectory)
+         return solution;
+
+      var projectDirectories = solution.Projects
+         .Select(p => Path.GetDirectoryName(p.FilePath))
+         .OfType<string>()
+         .Distinct(PathUtils.PathComparer);
+      var deleted = projectDirectories.SelectMany(d => EvaluationPlaceholders.Sweep(d, solutionDirectory)).ToList();
+      if (deleted.Count == 0)
+         return solution;
+
+      _logger.LogInformation("Deleted placeholder files that an interrupted write left: {Files}", string.Join(", ", deleted));
+      var documentIds = deleted.SelectMany(path => solution.GetDocumentIdsWithFilePath(path)).ToImmutableArray();
+      return documentIds.IsEmpty
+         ? solution
+         : SetWorkspaceCurrentSolution.Value(workspace, solution.RemoveDocuments(documentIds));
+   }
+
+   /// <returns>A warning for each unrestored project whose compilation does not resolve System.Object.</returns>
+   /// <remarks>
+   /// A restored project without System.Object opts out of framework references, as Microsoft.Build.NoTargets projects
+   /// do, so it gets no warning.
+   /// </remarks>
+   private static async Task<List<LoadWarning>> FindProjectsWithoutFrameworkReferencesAsync(
+      Solution solution, CancellationToken cancellationToken)
+   {
+      var warnings = new List<LoadWarning>();
+      foreach (var project in solution.Projects.Where(p => p.SupportsCompilation))
+      {
+         // A compilation of the metadata references alone has no source to parse or generate, so it costs little.
+         var referencesOnly = project
+            .WithProjectReferences([])
+            .WithAnalyzerReferences([])
+            .RemoveDocuments([.. project.DocumentIds]);
+         if (await ResolvesSystemObjectAsync(referencesOnly, cancellationToken)
+            || IsRestored(project)
+            // A core library defines System.Object in its own source, or gets it from a project it references.
+            || await ResolvesSystemObjectAsync(project, cancellationToken))
+         {
+            continue;
+         }
+
+         warnings.Add(new LoadWarning(
+            $"Project {project.Name} resolved no framework references (System.Object is missing), so its diagnostics are "
+               + "incomplete. Run dotnet restore and call reload_solution.",
+            project.Id));
+      }
+
+      return warnings;
+   }
+
+   /// <summary>
+   /// Returns whether the restore wrote the project's project.assets.json.
+   /// </summary>
+   /// <remarks>
+   /// The restore writes it to the base intermediate directory, an ancestor of the intermediate assembly's directory.
+   /// The search stops at an ancestor that also holds the project directory, because that one is shared with others.
+   /// Projects can also share the base intermediate directory, so an assets file counts only when it names this project.
+   /// </remarks>
+   private static bool IsRestored(Project project)
+   {
+      const string assetsFile = "project.assets.json";
+      if (project.FilePath is not { } projectPath || Path.GetDirectoryName(projectPath) is not { } projectDirectory)
+         return false;
+      if (IsAssetsFileOf(Path.Combine(projectDirectory, "obj", assetsFile), projectPath))
+         return true;
+
+      for (var directory = Path.GetDirectoryName(project.CompilationOutputInfo.AssemblyPath);
+         directory is not null && !PathUtils.IsSameOrUnder(projectDirectory, directory);
+         directory = Path.GetDirectoryName(directory))
+      {
+         if (IsAssetsFileOf(Path.Combine(directory, assetsFile), projectPath))
+            return true;
+      }
+
+      return false;
+   }
+
+   /// <returns>Whether the file exists and its project.restore.projectPath names the project file.</returns>
+   private static bool IsAssetsFileOf(string assetsPath, string projectPath)
+   {
+      if (!File.Exists(assetsPath))
+         return false;
+
+      try
+      {
+         using var stream = File.OpenRead(assetsPath);
+         using var document = JsonDocument.Parse(stream);
+         return document.RootElement.TryGetProperty("project", out var assetsProject)
+            && assetsProject.TryGetProperty("restore", out var restore)
+            && restore.TryGetProperty("projectPath", out var restoredPath)
+            && restoredPath.GetString() is { } restoredProjectPath
+            && PathUtils.PathComparer.Equals(Path.GetFullPath(restoredProjectPath), Path.GetFullPath(projectPath));
+      }
+      catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException
+         or ArgumentException)
+      {
+         return false;
+      }
+   }
+
+   private static async Task<bool> ResolvesSystemObjectAsync(Project project, CancellationToken cancellationToken) =>
+      await project.GetCompilationAsync(cancellationToken) is not { } compilation
+         || compilation.GetSpecialType(SpecialType.System_Object).TypeKind != TypeKind.Error;
 
    public void ClearCache()
    {

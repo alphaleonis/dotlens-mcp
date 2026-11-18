@@ -34,6 +34,9 @@ public record LoadSolutionResponse
    [Description("Total number of source documents.")]
    public int? DocumentCount { get; init; }
 
+   [Description("Problems the load found that leave results incomplete, such as a project that resolved no framework references.")]
+   public IReadOnlyList<string>? Warnings { get; init; }
+
    [Description("Suggested action if not yet ready.")]
    public string? Hint { get; init; }
 }
@@ -100,7 +103,8 @@ public class LoadSolutionTool
                   LoadedAt = result.Instance.LoadedAt,
                   TotalSolutions = _workerManager.WorkerCount,
                   ProjectCount = result.Instance.ProjectCount,
-                  DocumentCount = result.Instance.DocumentCount
+                  DocumentCount = result.Instance.DocumentCount,
+                  Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null
                });
          }
 
@@ -116,7 +120,8 @@ public class LoadSolutionTool
                TotalSolutions = _workerManager.WorkerCount,
                LoadedAt = result.Instance.LoadedAt,
                ProjectCount = result.Instance.ProjectCount,
-               DocumentCount = result.Instance.DocumentCount
+               DocumentCount = result.Instance.DocumentCount,
+               Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null
             });
       }
       catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

@@ -16,7 +16,8 @@ namespace DotLens.Infrastructure;
 /// All evaluations of one instance share a time budget, so a write that evaluates before and after it applies its
 /// changes still answers within the request timeout.
 /// </remarks>
-internal sealed partial class EvaluatedCompileItems(TimeSpan budget)
+/// <param name="cancellationToken">Ends the evaluation in progress and fails every later one.</param>
+internal sealed partial class EvaluatedCompileItems(TimeSpan budget, CancellationToken cancellationToken)
 {
    private readonly Stopwatch _elapsed = Stopwatch.StartNew();
    private readonly Dictionary<ProjectId, IReadOnlyList<EvaluatedCompileItem>> _cache = [];
@@ -27,6 +28,7 @@ internal sealed partial class EvaluatedCompileItems(TimeSpan budget)
    /// <param name="project">The workspace project, which names the project file and the target framework.</param>
    /// <param name="reuse">Whether an earlier evaluation of the same project may answer.</param>
    /// <exception cref="ProjectEvaluationException">MSBuild could not evaluate the project within the budget.</exception>
+   /// <exception cref="OperationCanceledException">The cancellation token was canceled.</exception>
    public IReadOnlyList<EvaluatedCompileItem> Get(Project project, bool reuse)
    {
       if (reuse && _cache.TryGetValue(project.Id, out var cached))
@@ -69,6 +71,7 @@ internal sealed partial class EvaluatedCompileItems(TimeSpan budget)
 
    private Evaluation Run(string projectPath, string? targetFramework, string hostPath)
    {
+      cancellationToken.ThrowIfCancellationRequested();
       var remaining = budget - _elapsed.Elapsed;
       if (remaining <= TimeSpan.Zero)
          throw new ProjectEvaluationException($"No time was left to evaluate {projectPath} within {budget.TotalSeconds} seconds");
@@ -107,19 +110,23 @@ internal sealed partial class EvaluatedCompileItems(TimeSpan budget)
 
       try
       {
-         process.BeginOutputReadLine();
-         process.BeginErrorReadLine();
-         if (!process.WaitForExit(remaining))
-            throw new ProjectEvaluationException($"'{hostPath} msbuild' did not evaluate {projectPath} within {budget.TotalSeconds} seconds");
+         using (cancellationToken.Register(() => Kill(process)))
+         {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            var exited = process.WaitForExit(remaining);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!exited)
+               throw new ProjectEvaluationException($"'{hostPath} msbuild' did not evaluate {projectPath} within {budget.TotalSeconds} seconds");
 
-         // The parameterless overload waits until the redirected output is read to its end.
-         // https://learn.microsoft.com/dotnet/api/system.diagnostics.process.waitforexit#system-diagnostics-process-waitforexit
-         process.WaitForExit();
+            // The parameterless overload waits until the redirected output is read to its end.
+            // https://learn.microsoft.com/dotnet/api/system.diagnostics.process.waitforexit#system-diagnostics-process-waitforexit
+            process.WaitForExit();
+         }
       }
       finally
       {
-         if (!process.HasExited)
-            process.Kill(entireProcessTree: true);
+         Kill(process);
       }
 
       string text;
@@ -136,6 +143,19 @@ internal sealed partial class EvaluatedCompileItems(TimeSpan budget)
       catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
       {
          throw new ProjectEvaluationException($"Could not read the output of 'dotnet msbuild': {ex.Message}{Environment.NewLine}{text}");
+      }
+   }
+
+   private static void Kill(Process process)
+   {
+      try
+      {
+         if (!process.HasExited)
+            process.Kill(entireProcessTree: true);
+      }
+      catch (InvalidOperationException)
+      {
+         // The process exited after the check.
       }
    }
 
@@ -225,31 +245,53 @@ internal sealed partial record DotnetHost(string Path, string? SdkDirectory)
    }
 
    /// <summary>
-   /// Returns the dotnet root directories found without the project: the one that runs DotLens, DOTNET_ROOT, and the
-   /// installation of each dotnet on the PATH, each also with symbolic links resolved.
+   /// Returns the dotnet root directories found without the project, each also with symbolic links resolved.
    /// </summary>
-   internal static List<string> KnownInstallations()
+   /// <remarks>
+   /// They are the root that runs DotLens and every root that MSBuildLocator searches when the workspace's build host
+   /// picks a project's SDK
+   /// (https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/MSBuild/BuildHost/NetCoreBuildHost.cs#L23-L34):
+   /// DOTNET_ROOT, the directory of DOTNET_HOST_PATH, DOTNET_MSBUILD_SDK_RESOLVER_CLI_DIR, and the installation of each
+   /// dotnet on the PATH.
+   /// https://github.com/microsoft/MSBuildLocator/blob/ff0b9004f2548ba616d4d1a0f901c842b1d7f993/src/MSBuildLocator/DotNetSdkLocationHelper.cs#L240-L281
+   /// </remarks>
+   internal static List<string> KnownInstallations() => KnownInstallations(Environment.GetEnvironmentVariable);
+
+   /// <param name="environment">Returns the value of an environment variable, or null when it is not set.</param>
+   internal static List<string> KnownInstallations(Func<string, string?> environment)
    {
       var roots = new List<string> { RuntimeRoot() };
-      if (Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnetRoot)
-         roots.Add(dotnetRoot);
-
-      var pathDirectories = (Environment.GetEnvironmentVariable("PATH") ?? "")
-         .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-      foreach (var directory in pathDirectories)
+      if (environment(Environment.Is64BitProcess ? "DOTNET_ROOT" : "DOTNET_ROOT(x86)") is { Length: > 0 } dotnetRoot)
+         AddRoot(dotnetRoot);
+      if (environment("DOTNET_HOST_PATH") is { Length: > 0 } hostPath && File.Exists(hostPath)
+         && System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(hostPath)) is { } hostDirectory)
       {
-         var dotnet = System.IO.Path.Combine(directory, Executable);
-         if (!File.Exists(dotnet))
-            continue;
-         roots.Add(directory);
-         if (System.IO.Path.GetDirectoryName(ResolveLinks(dotnet)) is { } resolvedDirectory)
-            roots.Add(resolvedDirectory);
+         roots.Add(hostDirectory);
+         if (System.IO.Path.GetDirectoryName(ResolveLinks(hostPath)) is { } resolvedHostDirectory)
+            roots.Add(resolvedHostDirectory);
       }
+
+      if (environment("DOTNET_MSBUILD_SDK_RESOLVER_CLI_DIR") is { Length: > 0 } cliDirectory)
+         AddRoot(cliDirectory);
+
+      var pathDirectories = (environment("PATH") ?? "")
+         .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+      foreach (var directory in pathDirectories.Where(d => File.Exists(System.IO.Path.Combine(d, Executable))))
+         AddRoot(directory);
 
       return [.. roots
          .SelectMany(root => new[] { root, ResolveLinks(root) })
          .Select(root => System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(root)))
          .Distinct(PathUtils.PathComparer)];
+
+      // MSBuildLocator uses the directory of the dotnet in a root after it resolves the dotnet's link.
+      void AddRoot(string root)
+      {
+         roots.Add(root);
+         var dotnet = System.IO.Path.Combine(root, Executable);
+         if (File.Exists(dotnet) && System.IO.Path.GetDirectoryName(ResolveLinks(dotnet)) is { } resolvedDirectory)
+            roots.Add(resolvedDirectory);
+      }
    }
 
    // The runtime directory is <dotnet root>/shared/Microsoft.NETCore.App/<version>/.

@@ -211,7 +211,7 @@ public class ApplyCodeActionTool
 
       if (!preview)
       {
-         if (!_workspaceManager.ApplyChanges(changedSolution))
+         if (!_workspaceManager.ApplyChanges(changedSolution, cancellationToken))
          {
             throw new ToolException(ErrorCodes.ApplyChangesFailed, "Failed to apply code action changes to workspace");
          }

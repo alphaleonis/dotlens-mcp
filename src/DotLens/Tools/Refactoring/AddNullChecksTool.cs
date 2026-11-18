@@ -171,7 +171,7 @@ public class AddNullChecksTool
       var solution = _workspaceManager.Solution
          ?? throw new InvalidOperationException("No solution loaded");
       var newSolution = solution.WithDocumentSyntaxRoot(document.Id, formattedRoot);
-      if (!_workspaceManager.ApplyChanges(newSolution))
+      if (!_workspaceManager.ApplyChanges(newSolution, cancellationToken))
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,

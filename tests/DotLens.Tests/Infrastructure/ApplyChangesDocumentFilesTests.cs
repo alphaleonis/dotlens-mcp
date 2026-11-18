@@ -3,6 +3,7 @@ using System.Text;
 using DotLens.Infrastructure;
 using DotLens.Tools.Editing;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -187,6 +188,8 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
    private string[] ProjectPaths => [AppProjectPath, LibProjectPath, ImpProjectPath, PropProjectPath, MtProjectPath, OneProjectPath];
 
+   private string SolutionPath => Path.Combine(TempDir, "RemoveDocument.slnx");
+
    public async ValueTask InitializeAsync()
    {
       _tempDir = Path.Combine(Path.GetTempPath(), $"DotLensRemoveDocumentTest_{Guid.NewGuid():N}");
@@ -214,8 +217,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       foreach (var name in new[] { "Imported", "ListedA", "ListedB", "FromProperty", "Polyfill", "Linked" })
          await File.WriteAllTextAsync(SharedFilePath(name), ClassText("Shared", name), CT);
 
-      var solutionPath = Path.Combine(_tempDir, "RemoveDocument.slnx");
-      await File.WriteAllTextAsync(solutionPath, """
+      await File.WriteAllTextAsync(SolutionPath, """
          <Solution>
            <Project Path="Lib/Lib.csproj" />
            <Project Path="App/App.csproj" />
@@ -226,9 +228,9 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
          </Solution>
          """, CT);
 
-      await TestFixtureRestore.EnsureRestoredAsync(solutionPath);
+      await TestFixtureRestore.EnsureRestoredAsync(SolutionPath);
       _workspaceManager = new WorkspaceManager(NullLogger<WorkspaceManager>.Instance, Options.Create(new DotLensOptions()));
-      await _workspaceManager.LoadSolutionAsync(solutionPath, CT);
+      await _workspaceManager.LoadSolutionAsync(SolutionPath, CT);
    }
 
    public ValueTask DisposeAsync()
@@ -408,7 +410,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       bool applied;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         applied = Workspace.ApplyChanges(added);
+         applied = Workspace.ApplyChanges(added, CT);
 
       Assert.True(applied);
       Assert.Equal(ClassText("Lib", "Added"), await File.ReadAllTextAsync(globPath, CT));
@@ -443,7 +445,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       var added = solution.AddDocument(DocumentId.CreateNewId(project.Id), name, SourceText.From(text, Encoding.UTF8), folders, path);
 
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         return Workspace.ApplyChanges(added);
+         return Workspace.ApplyChanges(added, CT);
    }
 
    /// <returns>The exit code, and the NETSDK1022 errors that the SDK's duplicate check reports.</returns>
@@ -571,7 +573,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       var globId = Assert.Single(solution.GetDocumentIdsWithFilePath(GlobPath));
 
       var ex = Assert.Throws<ToolException>(
-         () => DocumentChangePlan.Create(solution, solution.RemoveDocument(globId), Workspace.FormatPath, TimeSpan.Zero));
+         () => DocumentChangePlan.Create(solution, solution.RemoveDocument(globId), Workspace.FormatPath, TimeSpan.Zero, CT));
 
       Assert.Equal(
          $"Cannot remove {Workspace.FormatPath(GlobPath)} from project Lib: MSBuild could not evaluate the project.", ex.Message);
@@ -588,7 +590,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       var sdkDirectory = Assert.IsType<string>(host.SdkDirectory);
       Assert.Equal(Path.GetFullPath(Path.Combine(sdkDirectory, "..", "..", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet")), host.Path);
       Assert.True(File.Exists(Path.Combine(sdkDirectory, "Sdks", "Microsoft.NET.Sdk", "targets", "Microsoft.NET.Sdk.DefaultItems.props")));
-      var items = new EvaluatedCompileItems(TimeSpan.FromMinutes(1)).Get(lib, reuse: false);
+      var items = new EvaluatedCompileItems(TimeSpan.FromMinutes(1), CT).Get(lib, reuse: false);
       Assert.Equal(
          [Path.Combine(TempDir, "Lib", "Explicit", "Extra.cs"), GlobPath, SharedPath],
          items.Select(i => i.FullPath).Order(StringComparer.Ordinal));
@@ -647,7 +649,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       ToolException ex;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(changed));
+         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(changed, CT));
 
       Assert.Equal(ConflictMessage(addedPath), ex.Message);
       Assert.Same(solution, Workspace.EnsureSolutionLoaded());
@@ -679,7 +681,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       bool applied;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         applied = Workspace.ApplyChanges(changed);
+         applied = Workspace.ApplyChanges(changed, CT);
 
       Assert.True(applied);
       // The workspace saves the project file with a byte order mark when it adds the reference.
@@ -707,7 +709,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       ToolException ex;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(solution.RemoveDocuments([appSharedId, globId])));
+         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(solution.RemoveDocuments([appSharedId, globId]), CT));
 
       File.SetAttributes(AppProjectPath, FileAttributes.Normal);
       Assert.Equal(
@@ -750,7 +752,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       bool applied;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         applied = Workspace.ApplyChanges(solution);
+         applied = Workspace.ApplyChanges(solution, CT);
 
       Assert.True(applied);
       Assert.Equal(ClassText("Shared", "Twice"), await File.ReadAllTextAsync(addedPath, CT));
@@ -762,6 +764,297 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       Assert.Equal(expectedBytes, await File.ReadAllBytesAsync(MtProjectPath, CT));
       Assert.Equal((0, ""), await RunCheckForDuplicateItemsAsync(MtProjectPath, "net10.0"));
       Assert.Equal((0, ""), await RunCheckForDuplicateItemsAsync(MtProjectPath, "net11.0"));
+   }
+
+   /// <summary>
+   /// Glob.cs comes before Explicit/Extra.cs in Lib, so the workspace writes Glob.cs and then fails on the read-only
+   /// Extra.cs.
+   /// </summary>
+   [Fact]
+   public async Task ApplyChanges_Recovery_TryApplyChangesThrowsPartway_RestoresDiskAndBothSolutions()
+   {
+      var extraPath = Path.Combine(TempDir, "Lib", "Explicit", "Extra.cs");
+      var solution = Workspace.EnsureSolutionLoaded();
+      var lib = Assert.Single(solution.Projects, p => p.Name == "Lib");
+      var globId = Assert.Single(solution.GetDocumentIdsWithFilePath(GlobPath));
+      var extraId = Assert.Single(solution.GetDocumentIdsWithFilePath(extraPath));
+      Assert.True(lib.DocumentIds.ToList().IndexOf(globId) < lib.DocumentIds.ToList().IndexOf(extraId));
+      var globBytes = await File.ReadAllBytesAsync(GlobPath, CT);
+      var extraBytes = await File.ReadAllBytesAsync(extraPath, CT);
+      var globWrittenAt = File.GetLastWriteTimeUtc(GlobPath);
+      var projectBytes = await ReadProjectBytesAsync();
+      var changed = solution
+         .WithDocumentText(globId, SourceText.From(ClassText("Lib", "GlobChanged"), Encoding.UTF8))
+         .WithDocumentText(extraId, SourceText.From(ClassText("Lib", "ExtraChanged"), Encoding.UTF8));
+      File.SetAttributes(extraPath, FileAttributes.ReadOnly);
+
+      ToolException ex;
+      try
+      {
+         using (await Workspace.WriteLock.AcquireAsync(CT))
+            ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(changed, CT));
+      }
+      finally
+      {
+         File.SetAttributes(extraPath, FileAttributes.Normal);
+      }
+
+      Assert.Equal(ErrorCodes.ApplyChangesFailed, ex.Code);
+      Assert.Equal(
+         $"The workspace could not apply the changes, so DotLens restored the files it had written: Access to the path '{extraPath}' is denied.",
+         ex.Message);
+      Assert.Equal("Fix the cause, then try again.", ex.Hint);
+      // The restore wrote Glob.cs again, which shows that the workspace had written it before it failed.
+      Assert.NotEqual(globWrittenAt, File.GetLastWriteTimeUtc(GlobPath));
+      Assert.Equal(globBytes, await File.ReadAllBytesAsync(GlobPath, CT));
+      Assert.Equal(extraBytes, await File.ReadAllBytesAsync(extraPath, CT));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
+      Assert.Same(solution, Workspace.EnsureSolutionLoaded());
+      Assert.Same(solution, Workspace.WorkspaceSolution);
+
+      await AssertLaterWriteChangesOnlyItsFileAsync();
+      Assert.Equal(globBytes, await File.ReadAllBytesAsync(GlobPath, CT));
+      Assert.Equal(extraBytes, await File.ReadAllBytesAsync(extraPath, CT));
+   }
+
+   /// <summary>
+   /// The added file is outside Lib's glob and lists it in Lib.csproj, so the write would change the project file too.
+   /// </summary>
+   [Theory]
+   [InlineData(false)]
+   [InlineData(true)]
+   public async Task ApplyChanges_Recovery_Canceled_WritesNothing(bool duringEvaluation)
+   {
+      var addedPath = Path.Combine(TempDir, "Lib", "Explicit", "Listed.cs");
+      var projectBytes = await ReadProjectBytesAsync();
+      var solution = Workspace.EnsureSolutionLoaded();
+      var lib = Assert.Single(solution.Projects, p => p.Name == "Lib");
+      var added = solution.AddDocument(
+         DocumentId.CreateNewId(lib.Id), "Listed.cs", SourceText.From(ClassText("Lib", "Listed"), Encoding.UTF8), ["Explicit"], addedPath);
+      using var cts = CancellationTokenSource.CreateLinkedTokenSource(CT);
+      var sawPlaceholder = false;
+      Task cancelTask;
+      if (duringEvaluation)
+      {
+         // The placeholder exists only while MSBuild evaluates the project.
+         cancelTask = Task.Run(async () =>
+         {
+            while (!File.Exists(addedPath))
+               await Task.Delay(1, CT);
+            sawPlaceholder = true;
+            await cts.CancelAsync();
+         }, CT);
+      }
+      else
+      {
+         await cts.CancelAsync();
+         cancelTask = Task.CompletedTask;
+      }
+
+      using (await Workspace.WriteLock.AcquireAsync(CT))
+         Assert.Throws<OperationCanceledException>(() => Workspace.ApplyChanges(added, cts.Token));
+      await cancelTask;
+
+      Assert.Equal(duringEvaluation, sawPlaceholder);
+      Assert.False(File.Exists(addedPath));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
+      Assert.Empty(Directory.GetFiles(Path.Combine(TempDir, "Lib", "obj"), "DotLens.placeholders.*"));
+      Assert.Same(solution, Workspace.EnsureSolutionLoaded());
+      Assert.Same(solution, Workspace.WorkspaceSolution);
+
+      await AssertLaterWriteChangesOnlyItsFileAsync();
+      Assert.False(File.Exists(addedPath));
+   }
+
+   /// <summary>
+   /// The journal and the placeholder are what an evaluation leaves when its process ends before it deletes them.
+   /// Kept.cs is listed too, but holds a user's text.
+   /// </summary>
+   [Fact]
+   public async Task ApplyChanges_Recovery_LeftoverPlaceholder_IsDeletedOnLoad()
+   {
+      var leftoverDirectory = Path.Combine(TempDir, "Lib", "New");
+      var leftoverPath = Path.Combine(leftoverDirectory, "Left.cs");
+      var keptPath = Path.Combine(TempDir, "Lib", "Kept.cs");
+      var journalPath = Path.Combine(TempDir, "Lib", "obj", $"DotLens.placeholders.{Guid.NewGuid():N}.json");
+      Directory.CreateDirectory(leftoverDirectory);
+      await File.WriteAllTextAsync(leftoverPath, EvaluationPlaceholders.Content, CT);
+      await File.WriteAllTextAsync(keptPath, ClassText("Lib", "Kept"), CT);
+      var journal = new System.Text.Json.Nodes.JsonObject
+      {
+         ["files"] = new System.Text.Json.Nodes.JsonArray(leftoverPath, keptPath),
+         ["directories"] = new System.Text.Json.Nodes.JsonArray(leftoverDirectory),
+      };
+      await File.WriteAllTextAsync(journalPath, journal.ToJsonString(), CT);
+      var projectBytes = await ReadProjectBytesAsync();
+
+      await Workspace.LoadSolutionAsync(SolutionPath, CT);
+
+      Assert.False(File.Exists(leftoverPath));
+      Assert.False(Directory.Exists(leftoverDirectory));
+      Assert.False(File.Exists(journalPath));
+      Assert.Equal(ClassText("Lib", "Kept"), await File.ReadAllTextAsync(keptPath, CT));
+      Assert.Empty(ProjectNamesCompiling(leftoverPath));
+      Assert.Equal(["Lib"], ProjectNamesCompiling(keptPath));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
+      Assert.Same(Workspace.EnsureSolutionLoaded(), Workspace.WorkspaceSolution);
+
+      await AssertLaterWriteChangesOnlyItsFileAsync();
+      Assert.False(File.Exists(leftoverPath));
+   }
+
+   /// <summary>
+   /// The placeholders belong to an evaluation that is still in progress, as in another DotLens process.
+   /// </summary>
+   [Fact]
+   public async Task ApplyChanges_Recovery_LivePlaceholder_IsKeptOnLoad()
+   {
+      var livePath = Path.Combine(TempDir, "Lib", "Live", "Live.cs");
+
+      using (EvaluationPlaceholders.Create(Path.Combine(TempDir, "Lib"), [livePath],
+         reason => new ToolException(ErrorCodes.ApplyChangesFailed, reason), Workspace.FormatPath))
+      {
+         var journals = Directory.GetFiles(Path.Combine(TempDir, "Lib", "obj"), "DotLens.placeholders.*");
+
+         await Workspace.LoadSolutionAsync(SolutionPath, CT);
+
+         Assert.Equal(EvaluationPlaceholders.Content, await File.ReadAllTextAsync(livePath, CT));
+         Assert.Equal(journals, Directory.GetFiles(Path.Combine(TempDir, "Lib", "obj"), "DotLens.placeholders.*"));
+         Assert.Single(journals);
+      }
+
+      Assert.False(File.Exists(livePath));
+      Assert.False(Directory.Exists(Path.Combine(TempDir, "Lib", "Live")));
+      Assert.Empty(Directory.GetFiles(Path.Combine(TempDir, "Lib", "obj"), "DotLens.placeholders.*"));
+   }
+
+   [Fact]
+   public async Task ApplyChanges_Recovery_ChangeNotSupported_ReportsFilesUnchanged()
+   {
+      var solution = Workspace.EnsureSolutionLoaded();
+      var lib = Assert.Single(solution.Projects, p => p.Name == "Lib");
+      var globId = Assert.Single(solution.GetDocumentIdsWithFilePath(GlobPath));
+      var parseOptions = Assert.IsType<CSharpParseOptions>(lib.ParseOptions);
+      var globBytes = await File.ReadAllBytesAsync(GlobPath, CT);
+      var globWrittenAt = File.GetLastWriteTimeUtc(GlobPath);
+      var changed = solution
+         .WithDocumentText(globId, SourceText.From(ClassText("Lib", "GlobChanged"), Encoding.UTF8))
+         .WithProjectParseOptions(lib.Id, parseOptions.WithLanguageVersion(LanguageVersion.CSharp7));
+
+      ToolException ex;
+      using (await Workspace.WriteLock.AcquireAsync(CT))
+         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(changed, CT));
+
+      Assert.Equal(ErrorCodes.ApplyChangesFailed, ex.Code);
+      Assert.Equal("The workspace could not apply the changes and left every file unchanged: Changing parse options is not supported.", ex.Message);
+      Assert.Equal("Fix the cause, then try again.", ex.Hint);
+      Assert.Equal(globWrittenAt, File.GetLastWriteTimeUtc(GlobPath));
+      Assert.Equal(globBytes, await File.ReadAllBytesAsync(GlobPath, CT));
+      Assert.Same(solution, Workspace.EnsureSolutionLoaded());
+      Assert.Same(solution, Workspace.WorkspaceSolution);
+   }
+
+   /// <summary>
+   /// A file named obj stands where the journal's directory belongs, so the journal cannot be written.
+   /// </summary>
+   [Fact]
+   public async Task ApplyChanges_Recovery_JournalNotWritable_RefusesNamingTheDirectory()
+   {
+      var objPath = Path.Combine(TempDir, "Lib", "obj");
+      Directory.Move(objPath, objPath + "-moved");
+      await File.WriteAllTextAsync(objPath, "", CT);
+      var addedPath = Path.Combine(TempDir, "Lib", "Explicit", "Listed.cs");
+      var projectBytes = await ReadProjectBytesAsync();
+      var solution = Workspace.EnsureSolutionLoaded();
+
+      var ex = await Assert.ThrowsAsync<ToolException>(
+         () => ApplyAdditionAsync("Lib", "Listed.cs", ["Explicit"], addedPath, ClassText("Lib", "Listed")));
+
+      Assert.Equal(ErrorCodes.ApplyChangesFailed, ex.Code);
+      Assert.Equal(
+         $"Cannot add documents to project Lib: the journal of its placeholder files could not be written to {Workspace.FormatPath(objPath)} "
+            + $"(The file '{objPath}' already exists.).",
+         ex.Message);
+      Assert.Equal(AdditionHint, ex.Hint);
+      Assert.False(File.Exists(addedPath));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
+      Assert.Same(solution, Workspace.EnsureSolutionLoaded());
+   }
+
+   /// <summary>
+   /// The journal lists a placeholder and an empty directory outside the solution, as a journal that a repository ships
+   /// can.
+   /// </summary>
+   [Fact]
+   public async Task ApplyChanges_Recovery_LeftoverJournal_IgnoresPathsOutsideTheSolution()
+   {
+      var outside = Path.Combine(Path.GetTempPath(), $"DotLensOutside_{Guid.NewGuid():N}");
+      var outsideDirectory = Path.Combine(outside, "Empty");
+      var outsidePath = Path.Combine(outside, "Left.cs");
+      var insidePath = Path.Combine(TempDir, "Shared", "Left.cs");
+      Directory.CreateDirectory(outsideDirectory);
+      try
+      {
+         await File.WriteAllTextAsync(outsidePath, EvaluationPlaceholders.Content, CT);
+         await File.WriteAllTextAsync(insidePath, EvaluationPlaceholders.Content, CT);
+         var journalPath = Path.Combine(TempDir, "Lib", "obj", $"DotLens.placeholders.{Guid.NewGuid():N}.json");
+         var journal = new System.Text.Json.Nodes.JsonObject
+         {
+            ["files"] = new System.Text.Json.Nodes.JsonArray(outsidePath, insidePath),
+            ["directories"] = new System.Text.Json.Nodes.JsonArray(outsideDirectory),
+         };
+         await File.WriteAllTextAsync(journalPath, journal.ToJsonString(), CT);
+
+         await Workspace.LoadSolutionAsync(SolutionPath, CT);
+
+         Assert.Equal(EvaluationPlaceholders.Content, await File.ReadAllTextAsync(outsidePath, CT));
+         Assert.True(Directory.Exists(outsideDirectory));
+         Assert.False(File.Exists(insidePath));
+         Assert.False(File.Exists(journalPath));
+      }
+      finally
+      {
+         Directory.Delete(outside, recursive: true);
+      }
+   }
+
+   /// <summary>
+   /// MSBuildLocator, which picks the SDK that loads a project, also finds dotnet through DOTNET_HOST_PATH and
+   /// DOTNET_MSBUILD_SDK_RESOLVER_CLI_DIR.
+   /// </summary>
+   [Fact]
+   public void ApplyChanges_Recovery_EvaluationHost_KnowsMSBuildLocatorInstallations()
+   {
+      var executable = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+      var hostRoot = Path.Combine(TempDir, "host-root");
+      var cliRoot = Path.Combine(TempDir, "cli-root");
+      var linkedRoot = Path.Combine(TempDir, "linked-root");
+      foreach (var root in new[] { hostRoot, cliRoot, linkedRoot })
+         Directory.CreateDirectory(Path.Combine(root, "sdk", "1", "Sdks", "X"));
+      File.WriteAllText(Path.Combine(hostRoot, executable), "");
+      File.WriteAllText(Path.Combine(linkedRoot, executable), "");
+      // MSBuildLocator resolves the link of the dotnet in DOTNET_MSBUILD_SDK_RESOLVER_CLI_DIR except on Windows.
+      if (OperatingSystem.IsWindows())
+         File.WriteAllText(Path.Combine(cliRoot, executable), "");
+      else
+         File.CreateSymbolicLink(Path.Combine(cliRoot, executable), Path.Combine(linkedRoot, executable));
+
+      var environment = new Dictionary<string, string>
+      {
+         ["DOTNET_HOST_PATH"] = Path.Combine(hostRoot, executable),
+         ["DOTNET_MSBUILD_SDK_RESOLVER_CLI_DIR"] = cliRoot,
+      };
+      var installations = DotnetHost.KnownInstallations(name => environment.GetValueOrDefault(name));
+
+      string[] expected = OperatingSystem.IsWindows()
+         ? [.. DotnetHost.KnownInstallations(_ => null), hostRoot, cliRoot]
+         : [.. DotnetHost.KnownInstallations(_ => null), hostRoot, cliRoot, linkedRoot];
+      Assert.Equal(expected, installations);
+      var lib = Assert.Single(Workspace.EnsureSolutionLoaded().Projects, p => p.Name == "Lib");
+      var planted = lib.AnalyzerConfigDocuments.Aggregate(lib.WithAnalyzerReferences([]), (p, d) => p.RemoveAnalyzerConfigDocument(d.Id))
+         .AddAnalyzerConfigDocument("a.globalconfig", SourceText.From(""), filePath: Path.Combine(hostRoot, "sdk", "1", "Sdks", "X", "a.globalconfig"))
+         .Project;
+      Assert.Equal(new DotnetHost(Path.Combine(hostRoot, executable), Path.Combine(hostRoot, "sdk", "1")), DotnetHost.Find(planted, installations));
    }
 
    private string ConflictMessage(string addedPath) =>
@@ -778,7 +1071,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       }
 
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         return Workspace.ApplyChanges(solution);
+         return Workspace.ApplyChanges(solution, CT);
    }
 
    private async Task<bool> ApplyRemovalAsync(string path, params string[] projectNames)
@@ -790,7 +1083,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       Assert.Equal(projectNames.Length, ids.Count);
 
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         return Workspace.ApplyChanges(solution.RemoveDocuments([.. ids]));
+         return Workspace.ApplyChanges(solution.RemoveDocuments([.. ids]), CT);
    }
 
    /// <summary>

@@ -139,7 +139,7 @@ public class RenameSymbolTool
       }
 
       // Apply changes to workspace (writes files and updates in-memory solution)
-      if (!_workspace.ApplyChanges(newSolution))
+      if (!_workspace.ApplyChanges(newSolution, cancellationToken))
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,

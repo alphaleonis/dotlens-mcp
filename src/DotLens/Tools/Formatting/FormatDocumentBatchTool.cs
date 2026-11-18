@@ -123,7 +123,7 @@ public class FormatDocumentBatchTool
       // Apply changes to workspace (writes files and updates in-memory solution)
       if (!preview && changedSolution != solution)
       {
-         if (!_workspaceManager.ApplyChanges(changedSolution))
+         if (!_workspaceManager.ApplyChanges(changedSolution, cancellationToken))
          {
             throw new ToolException(
                ErrorCodes.ApplyChangesFailed,

@@ -67,6 +67,11 @@ public interface IReadOnlyWorkspace
    int MaxSortableResults { get; }
 
    /// <summary>
+   /// Gets the problems that the last load of the solution found, in the order it found them.
+   /// </summary>
+   IReadOnlyList<LoadWarning> LoadWarnings { get; }
+
+   /// <summary>
    /// Ensures a solution is loaded and returns it, throwing if not.
    /// </summary>
    /// <returns>The loaded solution.</returns>

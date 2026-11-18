@@ -29,6 +29,9 @@ public record ReloadSolutionResponse
 
    [Description("Total number of source documents.")]
    public int? DocumentCount { get; init; }
+
+   [Description("Problems the load found that leave results incomplete, such as a project that resolved no framework references.")]
+   public IReadOnlyList<string>? Warnings { get; init; }
 }
 
 #endregion
@@ -93,7 +96,8 @@ public class ReloadSolutionTool
                TotalSolutions = _workerManager.WorkerCount,
                ReloadedAt = result.Instance.LoadedAt,
                ProjectCount = result.Instance.ProjectCount,
-               DocumentCount = result.Instance.DocumentCount
+               DocumentCount = result.Instance.DocumentCount,
+               Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null
             });
       }
       catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)

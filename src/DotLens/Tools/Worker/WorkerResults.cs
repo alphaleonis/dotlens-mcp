@@ -24,6 +24,11 @@ public record WorkerLoadSolutionResult
    public required string SolutionPath { get; init; }
    public required int ProjectCount { get; init; }
    public required int DocumentCount { get; init; }
+
+   /// <summary>
+   /// The messages of the problems that the load found, as <see cref="Infrastructure.LoadWarning"/> describes them.
+   /// </summary>
+   public required IReadOnlyList<string> Warnings { get; init; }
 }
 
 #endregion
@@ -51,6 +56,11 @@ public record WorkerSolutionInfo
    public string? LoadedAt { get; init; }
    public required int Errors { get; init; }
    public required int Warnings { get; init; }
+
+   /// <summary>
+   /// The messages of the problems that the load found, as <see cref="Infrastructure.LoadWarning"/> describes them.
+   /// </summary>
+   public required IReadOnlyList<string> LoadWarnings { get; init; }
 }
 
 /// <summary>

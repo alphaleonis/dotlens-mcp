@@ -120,7 +120,7 @@ public class ImplementMissingMembersTool
 
       if (!preview)
       {
-         if (!_workspaceManager.ApplyChanges(changedSolution))
+         if (!_workspaceManager.ApplyChanges(changedSolution, cancellationToken))
          {
             throw new ToolException(
                ErrorCodes.ApplyChangesFailed,

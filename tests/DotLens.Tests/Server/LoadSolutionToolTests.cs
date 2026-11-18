@@ -105,6 +105,42 @@ public class LoadSolutionToolTests
       }
    }
 
+   [Theory]
+   [InlineData(false, true)]
+   [InlineData(true, true)]
+   [InlineData(false, false)]
+   public async Task LoadSolution_UnresolvedFrameworkReferences_ReturnsTheWorkerLoadWarnings(
+      bool wasAlreadyLoaded, bool hasWarning)
+   {
+      const string warning = "Project App resolved no framework references.";
+      var workerManager = A.Fake<IMultiWorkerManager>();
+      var solutionPath = Path.GetTempFileName() + ".sln";
+      File.WriteAllText(solutionPath, "");
+
+      try
+      {
+         var instance = new WorkerInstance
+         {
+            SolutionPath = solutionPath,
+            Client = null!,
+            LoadedAt = DateTime.UtcNow,
+            LoadWarnings = hasWarning ? [warning] : [],
+         };
+         A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
+            .Returns(new LoadSolutionResult(instance, wasAlreadyLoaded));
+         var tool = new LoadSolutionTool(workerManager, DefaultOptions(), NullLogger<LoadSolutionTool>.Instance);
+
+         var result = await tool.LoadSolutionAsync(solutionPath, cancellationToken: CT);
+
+         Assert.Equal(wasAlreadyLoaded ? "already_loaded" : "loaded", result.Data.Status);
+         Assert.Equal(hasWarning ? new[] { warning } : null, result.Data.Warnings);
+      }
+      finally
+      {
+         File.Delete(solutionPath);
+      }
+   }
+
    [Fact]
    public async Task LoadSolution_LoadFails_ThrowsToolException()
    {

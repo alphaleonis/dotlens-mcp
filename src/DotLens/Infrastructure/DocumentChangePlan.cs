@@ -52,10 +52,17 @@ internal sealed class DocumentChangePlan
    /// </summary>
    /// <param name="evaluationBudget">The time that all MSBuild evaluations of the plan share.</param>
    /// <exception cref="ToolException">A change cannot be written to the project files. Nothing was written then.</exception>
+   /// <exception cref="OperationCanceledException">
+   /// The cancellation token was canceled. Nothing was written then.
+   /// </exception>
    public static DocumentChangePlan Create(
-      Solution oldSolution, Solution newSolution, Func<string?, string> formatPath, TimeSpan evaluationBudget)
+      Solution oldSolution,
+      Solution newSolution,
+      Func<string?, string> formatPath,
+      TimeSpan evaluationBudget,
+      CancellationToken cancellationToken)
    {
-      var evaluatedItems = new EvaluatedCompileItems(evaluationBudget);
+      var evaluatedItems = new EvaluatedCompileItems(evaluationBudget, cancellationToken);
       var removedDocumentIds = new List<DocumentId>();
       var projectFileEdits = new Dictionary<string, ProjectFileEdit>(PathUtils.PathComparer);
       var filesToDelete = new List<string>();
@@ -202,8 +209,9 @@ internal sealed class DocumentChangePlan
    /// Decides which Compile items that the workspace adds for the documents are duplicates to take out again.
    /// </summary>
    /// <remarks>
-   /// MSBuild includes only files that exist, so each added file that is missing gets an empty placeholder while the
-   /// projects are evaluated. The placeholders are deleted before the method returns.
+   /// MSBuild includes only files that exist, so each added file that is missing gets a placeholder while the projects
+   /// are evaluated, as <see cref="EvaluationPlaceholders"/> describes. The placeholders are deleted before the method
+   /// returns.
    /// </remarks>
    private static void PlanAdditions(
       Solution newSolution,
@@ -235,7 +243,8 @@ internal sealed class DocumentChangePlan
 
       var siblings = newSolution.Projects.Where(p => PathUtils.PathComparer.Equals(p.FilePath, projectPath)).ToList();
       var includedBefore = new Dictionary<ProjectId, HashSet<string>>();
-      using (var placeholders = Placeholders.Create(addersByFilePath.Keys, refuse))
+      var projectDirectory = Path.GetDirectoryName(projectPath) ?? throw refuse("the project file has no directory");
+      using (var placeholders = EvaluationPlaceholders.Create(projectDirectory, addersByFilePath.Keys, refuse, formatPath))
       {
          foreach (var sibling in siblings)
          {
@@ -340,92 +349,6 @@ internal sealed class DocumentChangePlan
          var bytes = text == originalText ? Original.Encode(originalText) : written.Encode(text);
          if (!bytes.AsSpan().SequenceEqual(written.OriginalBytes))
             File.WriteAllBytes(ProjectPath, bytes);
-      }
-   }
-
-   /// <summary>
-   /// Empty files at the paths of added documents that do not exist yet, with the directories created for them.
-   /// </summary>
-   private sealed class Placeholders : IDisposable
-   {
-      private readonly List<string> _files = [];
-      private readonly List<string> _directories = [];
-      private readonly Func<string, ToolException> _refuse;
-
-      private Placeholders(Func<string, ToolException> refuse)
-      {
-         _refuse = refuse;
-      }
-
-      public static Placeholders Create(IEnumerable<string> filePaths, Func<string, ToolException> refuse)
-      {
-         var placeholders = new Placeholders(refuse);
-         try
-         {
-            foreach (var filePath in filePaths.Where(p => !File.Exists(p)))
-            {
-               placeholders.CreateDirectory(Path.GetDirectoryName(filePath));
-               using (new FileStream(filePath, FileMode.CreateNew))
-                  placeholders._files.Add(filePath);
-            }
-         }
-         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-         {
-            placeholders.Dispose();
-            throw refuse($"an empty file could not be created to evaluate the project: {ex.Message}");
-         }
-
-         return placeholders;
-      }
-
-      /// <exception cref="ToolException">A placeholder could not be deleted.</exception>
-      public void Delete()
-      {
-         try
-         {
-            foreach (var file in _files)
-               File.Delete(file);
-            _files.Clear();
-            foreach (var directory in Enumerable.Reverse(_directories))
-               Directory.Delete(directory);
-            _directories.Clear();
-         }
-         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-         {
-            throw _refuse($"the empty file created to evaluate the project could not be deleted: {ex.Message}");
-         }
-      }
-
-      /// <summary>
-      /// Deletes what is left when an evaluation fails, without hiding its exception.
-      /// </summary>
-      public void Dispose()
-      {
-         foreach (var file in _files)
-            TryDelete(() => File.Delete(file));
-         foreach (var directory in Enumerable.Reverse(_directories))
-            TryDelete(() => Directory.Delete(directory));
-      }
-
-      private static void TryDelete(Action delete)
-      {
-         try
-         {
-            delete();
-         }
-         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-         {
-            // The refusal reports the evaluation's error, which caused this cleanup.
-         }
-      }
-
-      private void CreateDirectory(string? directory)
-      {
-         if (directory is null || Directory.Exists(directory))
-            return;
-         CreateDirectory(Path.GetDirectoryName(directory));
-         Directory.CreateDirectory(directory);
-         _directories.Add(directory);
       }
    }
 }

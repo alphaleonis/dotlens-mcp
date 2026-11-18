@@ -69,7 +69,7 @@ public class FileWriteFailureTests : MockableRoslynServiceTestBase
       Assert.Equal(ErrorCodes.FileNotInSolution, ex.Code);
 
       // Verify ApplyChanges was never called (short-circuited before file operations)
-      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._))
+      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._, A<CancellationToken>._))
          .MustNotHaveHappened();
    }
 
@@ -87,7 +87,7 @@ public class FileWriteFailureTests : MockableRoslynServiceTestBase
       Assert.Equal("INVALID_PARAMETER", ex.Code);
 
       // ApplyChanges never called (validation failed before reaching file operations)
-      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._))
+      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._, A<CancellationToken>._))
          .MustNotHaveHappened();
    }
 

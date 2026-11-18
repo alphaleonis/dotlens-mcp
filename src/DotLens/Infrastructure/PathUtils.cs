@@ -23,6 +23,17 @@ public static class PathUtils
        : StringComparer.Ordinal;
 
    /// <summary>
+   /// Returns whether the full path is the directory or lies under it.
+   /// </summary>
+   public static bool IsSameOrUnder(string path, string directory)
+   {
+      var trimmedPath = Path.TrimEndingDirectorySeparator(path);
+      var trimmedDirectory = Path.TrimEndingDirectorySeparator(directory);
+      return string.Equals(trimmedPath, trimmedDirectory, PathComparison)
+         || trimmedPath.StartsWith(trimmedDirectory + Path.DirectorySeparatorChar, PathComparison);
+   }
+
+   /// <summary>
    /// Normalizes path separators to forward slashes for cross-platform consistency.
    /// </summary>
    public static string NormalizePath(string path)

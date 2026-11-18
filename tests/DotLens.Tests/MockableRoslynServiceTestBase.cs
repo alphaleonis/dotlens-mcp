@@ -122,7 +122,7 @@ public abstract class MockableRoslynServiceTestBase : IDisposable
    /// </summary>
    protected void SetupApplyChangesSuccess()
    {
-      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._)).Returns(true);
+      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._, A<CancellationToken>._)).Returns(true);
    }
 
    /// <summary>
@@ -131,6 +131,6 @@ public abstract class MockableRoslynServiceTestBase : IDisposable
    /// </summary>
    protected void SetupApplyChangesFailure()
    {
-      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._)).Returns(false);
+      A.CallTo(() => FakeWorkspaceManager.ApplyChanges(A<Solution>._, A<CancellationToken>._)).Returns(false);
    }
 }

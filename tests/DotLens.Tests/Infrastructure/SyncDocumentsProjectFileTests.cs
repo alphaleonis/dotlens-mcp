@@ -220,7 +220,7 @@ public sealed class SyncDocumentsProjectFileTests : IAsyncLifetime
 
       bool applied;
       using (await Workspace.WriteLock.AcquireAsync(CT))
-         applied = Workspace.ApplyChanges(solution.RemoveDocument(extraId));
+         applied = Workspace.ApplyChanges(solution.RemoveDocument(extraId), CT);
 
       Assert.True(applied);
       Assert.False(File.Exists(ExtraPath));

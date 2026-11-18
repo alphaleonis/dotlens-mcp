@@ -55,6 +55,8 @@ public class GetDiagnosticsTool
 {
    private static readonly string[] SuggestedNextToolsWithDiagnostics = ["get_code_actions for a diagnostic to see available fixes", "apply_code_action to apply a fix automatically"];
    private static readonly string[] SuggestedNextToolsNoDiagnostics = ["No diagnostics found - solution is healthy"];
+   private static readonly string[] SuggestedNextToolsWithLoadWarning =
+      ["reload_solution after dotnet restore, so every project resolves its framework references"];
 
    private readonly IReadOnlyWorkspace _workspaceManager;
 
@@ -84,20 +86,36 @@ public class GetDiagnosticsTool
 
       // Collect diagnostics based on scope
       List<Diagnostic> allDiagnostics;
+      var projectsInScope = new HashSet<ProjectId>();
       if (!string.IsNullOrEmpty(filePath))
-         allDiagnostics = await CollectFileDiagnosticsAsync(filePath, includeAnalyzers, cancellationToken);
+         allDiagnostics = await CollectFileDiagnosticsAsync(filePath, includeAnalyzers, projectsInScope, cancellationToken);
       else if (!string.IsNullOrEmpty(projectPath))
-         allDiagnostics = await CollectProjectDiagnosticsAsync(solution, projectPath, includeAnalyzers, cancellationToken);
+         allDiagnostics = await CollectProjectDiagnosticsAsync(
+            solution, projectPath, includeAnalyzers, projectsInScope, cancellationToken);
       else
-         allDiagnostics = await CollectSolutionDiagnosticsAsync(solution, includeAnalyzers, cancellationToken);
+         allDiagnostics = await CollectSolutionDiagnosticsAsync(solution, includeAnalyzers, projectsInScope, cancellationToken);
 
       // Apply filters and build result
-      return BuildResult(allDiagnostics, severity, idPattern, includeHidden);
+      return BuildResult(allDiagnostics, severity, idPattern, includeHidden, LoadWarningFor(projectsInScope));
+   }
+
+   /// <returns>The load warnings of the projects in scope, joined, or null when they have none.</returns>
+   /// <remarks>
+   /// The filters do not apply to them, because each says that diagnostics of its project are missing.
+   /// </remarks>
+   private string? LoadWarningFor(HashSet<ProjectId> projectsInScope)
+   {
+      var messages = _workspaceManager.LoadWarnings
+         .Where(w => w.ProjectId is { } projectId && projectsInScope.Contains(projectId))
+         .Select(w => w.Message)
+         .ToList();
+      return messages.Count > 0 ? string.Join(" ", messages) : null;
    }
 
    private async Task<List<Diagnostic>> CollectFileDiagnosticsAsync(
       string filePath,
       bool includeAnalyzers,
+      HashSet<ProjectId> projectsInScope,
       CancellationToken cancellationToken)
    {
       var diagnostics = new List<Diagnostic>();
@@ -111,6 +129,7 @@ public class GetDiagnosticsTool
             "Check the file path or reload the solution");
       }
 
+      projectsInScope.Add(document.Project.Id);
       var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
       if (semanticModel != null)
       {
@@ -129,6 +148,7 @@ public class GetDiagnosticsTool
       Solution solution,
       string projectPath,
       bool includeAnalyzers,
+      HashSet<ProjectId> projectsInScope,
       CancellationToken cancellationToken)
    {
       var diagnostics = new List<Diagnostic>();
@@ -142,6 +162,7 @@ public class GetDiagnosticsTool
             "Check the project path or use get_project_structure to list available projects");
       }
 
+      projectsInScope.Add(project.Id);
       var compilation = await project.GetCompilationAsync(cancellationToken);
       if (compilation != null)
       {
@@ -159,6 +180,7 @@ public class GetDiagnosticsTool
    private static async Task<List<Diagnostic>> CollectSolutionDiagnosticsAsync(
       Solution solution,
       bool includeAnalyzers,
+      HashSet<ProjectId> projectsInScope,
       CancellationToken cancellationToken)
    {
       var diagnostics = new List<Diagnostic>();
@@ -166,6 +188,7 @@ public class GetDiagnosticsTool
       foreach (var project in solution.Projects)
       {
          cancellationToken.ThrowIfCancellationRequested();
+         projectsInScope.Add(project.Id);
 
          var compilation = await project.GetCompilationAsync(cancellationToken);
          if (compilation != null)
@@ -186,7 +209,8 @@ public class GetDiagnosticsTool
       List<Diagnostic> allDiagnostics,
       DiagnosticSeverityDto? severity,
       string? idPattern,
-      bool includeHidden)
+      bool includeHidden,
+      string? loadWarning)
    {
       var idMatcher = new GlobMatcher(idPattern);
 
@@ -226,11 +250,12 @@ public class GetDiagnosticsTool
             WarningCount = warningCount,
             Diagnostics = diagnosticList
          },
-         errorCount > 0 || warningCount > 0
-            ? SuggestedNextToolsWithDiagnostics
+         loadWarning is not null ? SuggestedNextToolsWithLoadWarning
+            : errorCount > 0 || warningCount > 0 ? SuggestedNextToolsWithDiagnostics
             : SuggestedNextToolsNoDiagnostics,
          diagnosticList.Count,
-         diagnosticList.Count);
+         diagnosticList.Count,
+         warning: loadWarning);
    }
 
    private static ImmutableArray<DiagnosticAnalyzer> GetAnalyzers(Project project) =>

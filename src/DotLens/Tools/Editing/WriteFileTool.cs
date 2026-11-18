@@ -96,7 +96,7 @@ public class WriteFileTool
          var newSourceText = SourceText.From(content, encoding);
          var newSolution = _workspace.Solution!.WithDocumentText(existingDocument.Id, newSourceText);
 
-         if (!_workspace.ApplyChanges(newSolution))
+         if (!_workspace.ApplyChanges(newSolution, cancellationToken))
          {
             throw new ToolException(
                ErrorCodes.ApplyChangesFailed,

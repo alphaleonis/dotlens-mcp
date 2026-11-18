@@ -291,7 +291,7 @@ public class FixAllTool
       // Apply changes to workspace (writes files and updates in-memory solution)
       if (!preview)
       {
-         if (!_workspaceManager.ApplyChanges(changedSolution))
+         if (!_workspaceManager.ApplyChanges(changedSolution, cancellationToken))
          {
             throw new ToolException(
                ErrorCodes.ApplyChangesFailed,

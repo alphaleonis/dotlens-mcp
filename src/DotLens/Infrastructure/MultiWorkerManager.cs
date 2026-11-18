@@ -16,6 +16,11 @@ public class WorkerInstance : IAsyncDisposable
    public int? ProjectCount { get; internal set; }
    public int? DocumentCount { get; internal set; }
 
+   /// <summary>
+   /// The messages of the problems that the worker's load found, as <see cref="LoadWarning"/> describes them.
+   /// </summary>
+   public IReadOnlyList<string> LoadWarnings { get; internal set; } = [];
+
    public async ValueTask DisposeAsync()
    {
       try
@@ -284,6 +289,11 @@ public class MultiWorkerManager : IMultiWorkerManager
                      instance.ProjectCount = pc.GetInt32();
                   if (dataElement.TryGetProperty("documentCount", out var dc))
                      instance.DocumentCount = dc.GetInt32();
+                  if (dataElement.TryGetProperty("warnings", out var warnings)
+                     && warnings.ValueKind == JsonValueKind.Array)
+                  {
+                     instance.LoadWarnings = [.. warnings.EnumerateArray().Select(w => w.GetString()).OfType<string>()];
+                  }
                }
             }
          }
