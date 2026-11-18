@@ -62,3 +62,7 @@
 - A write that consults MSBuild must decide everything before the workspace writes: two review rounds found regressions where a post-apply evaluation or refusal left disk and the solutions disagreeing. Plan, refuse, then only write.
 - `dotnet msbuild -getItem` evaluates the outer build of a multi-targeted project and returns no Compile items; pass -p:TargetFramework per workspace project. Pass -noAutoResponse so a repo's Directory.Build.rsp cannot change the evaluation or drop a binlog.
 - Under the operator's new rule, implementers and reviewers ran filtered tests only; the conductor's single full suite (1466) passed first time.
+
+## Reference search group — cr8j, 6nks, piat (2026-11-18)
+- First area group: one implementer, one review, one fix round and one full suite closed three bugs in about 25 minutes, against 55-80 minutes per bug before.
+- Ref-ness of an argument comes from the parameter (IArgumentOperation.Parameter.RefKind), not the argument's keyword: ref passed to an in or ref readonly parameter reads.
