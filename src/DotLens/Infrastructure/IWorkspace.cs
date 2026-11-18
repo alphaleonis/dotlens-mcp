@@ -41,8 +41,15 @@ public interface IWorkspace : IReadOnlyWorkspace, IDisposable
    /// and not transactional - partial writes may occur if an error happens during writing.
    /// </summary>
    /// <param name="newSolution">The modified solution to apply.</param>
+   /// <remarks>
+   /// It writes added and removed documents as <see cref="DocumentChangePlan"/> describes.
+   /// </remarks>
    /// <returns>True if changes were applied successfully, false otherwise.</returns>
    /// <exception cref="InvalidOperationException">If no workspace is loaded.</exception>
+   /// <exception cref="ToolException">
+   /// A document change cannot be written to the project files, and nothing was applied. It is also thrown after the
+   /// changes were applied, when a write to a project file or the disk fails.
+   /// </exception>
    bool ApplyChanges(Solution newSolution);
 
    /// <summary>

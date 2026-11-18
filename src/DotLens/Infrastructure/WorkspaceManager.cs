@@ -25,6 +25,16 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
          ?.CreateDelegate<Func<Workspace, Solution, Solution>>()
       ?? throw new InvalidOperationException("Workspace.SetCurrentSolution(Solution) was not found"));
 
+   // Workspace.SetCurrentSolution raises the content version, and TryApplyChanges refuses a solution with an older one,
+   // so the field is set directly to keep the version of the solutions that tools fork.
+   // https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/Core/Portable/Workspace/Solution/SolutionState.cs#L240-L247
+   // https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/Core/Portable/Workspace/Workspace.cs#L1535
+   private static readonly Lazy<FieldInfo> WorkspaceLatestSolution = new(() =>
+      typeof(Workspace).GetField("_latestSolution", BindingFlags.Instance | BindingFlags.NonPublic) is { } field
+         && field.FieldType == typeof(Solution)
+         ? field
+         : throw new InvalidOperationException("Workspace._latestSolution was not found"));
+
    private readonly AsyncLock _writeLock = new();
    private MSBuildWorkspace? _workspace;
    private Solution? _solution;
@@ -132,10 +142,7 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
 
          // A path maps to several documents when more than one project compiles the file: a multi-targeted project,
          // a linked file, or a source file that a NuGet package adds to several projects.
-         var pathComparer = PathUtils.PathComparison == StringComparison.OrdinalIgnoreCase
-             ? StringComparer.OrdinalIgnoreCase
-             : StringComparer.Ordinal;
-         var documentsByPath = new Dictionary<string, List<Document>>(pathComparer);
+         var documentsByPath = new Dictionary<string, List<Document>>(PathUtils.PathComparer);
          foreach (var document in solution.Projects.SelectMany(p => p.Documents))
          {
             if (document.FilePath is not { } filePath)
@@ -410,12 +417,38 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       if (_workspace == null)
          throw new InvalidOperationException("No workspace loaded. Call LoadSolutionAsync first.");
 
-      bool success = _workspace.TryApplyChanges(newSolution);
+      // MSBuildWorkspace deletes a removed file that another project still compiles, its project file edit throws on
+      // an item that an SDK glob adds, and it lists an added file that the glob already includes. So the workspace
+      // applies every change except the removals, and DocumentChangePlan writes the rest.
+      // https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/MSBuild/Core/MSBuild/MSBuildWorkspace.cs#L476-L547
+      var currentSolution = _workspace.CurrentSolution;
+      // The server ends a forwarded request after TimeoutSeconds (ForwardingMcpServerToolExtensions). Evaluations get
+      // half of it, so the rest of the write has time left; every evaluation runs before anything is written.
+      var plan = DocumentChangePlan.Create(currentSolution, newSolution, FormatPath, TimeSpan.FromSeconds(_options.TimeoutSeconds / 2.0));
+      var stagedSolution = currentSolution;
+      if (plan.RemovedDocumentIds.Count > 0)
+      {
+         stagedSolution = currentSolution.RemoveDocuments([.. plan.RemovedDocumentIds]);
+         WorkspaceLatestSolution.Value.SetValue(_workspace, stagedSolution);
+      }
+
+      bool success = false;
+      try
+      {
+         success = _workspace.TryApplyChanges(newSolution);
+      }
+      finally
+      {
+         if (!success && stagedSolution != currentSolution && ReferenceEquals(_workspace.CurrentSolution, stagedSolution))
+            WorkspaceLatestSolution.Value.SetValue(_workspace, currentSolution);
+      }
+
       if (success)
       {
          // TryApplyChanges updates workspace.CurrentSolution, so use that
          _solution = _workspace.CurrentSolution;
          ResetDocumentCache();
+         plan.Apply();
       }
       else
       {

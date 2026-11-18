@@ -16,6 +16,13 @@ public static class PathUtils
        : StringComparison.Ordinal;
 
    /// <summary>
+   /// The string comparer for <see cref="PathComparison"/>.
+   /// </summary>
+   public static StringComparer PathComparer => OperatingSystem.IsWindows()
+       ? StringComparer.OrdinalIgnoreCase
+       : StringComparer.Ordinal;
+
+   /// <summary>
    /// Normalizes path separators to forward slashes for cross-platform consistency.
    /// </summary>
    public static string NormalizePath(string path)
