@@ -29,8 +29,8 @@ public class UsingToolsScopeTests : IsolatedProjectTestBase
          }
 
          """, """
-         using Text = System.Text;
          using System.Text;
+         using Text = System.Text;
 
          namespace CoreTestProject.Scope;
 
@@ -57,8 +57,8 @@ public class UsingToolsScopeTests : IsolatedProjectTestBase
          }
 
          """, """
-         using static System.Text;
          using System.Text;
+         using static System.Text;
 
          namespace CoreTestProject.Scope;
 

@@ -22,7 +22,7 @@ public class OrganizeUsingsTool
    }
 
    [McpServerTool(Name = "organize_usings", Destructive = true, Idempotent = true, OpenWorld = false)]
-   [Description("Sort and remove unused using directives in a file, project, or solution.")]
+   [Description("Sort using and extern alias directives and remove unused usings in a file, project, or solution.")]
    public async Task<ToolResult<OrganizeUsingsResponse>> OrganizeUsingsAsync(
        [Description("Search scope. Defaults to entire solution.")]
        SearchScope? scope = null,
@@ -208,7 +208,7 @@ public class OrganizeUsingsTool
          return null;
 
       var originalCount = UsingDirectiveLayout.GetAllUsings(compilationUnit).Count();
-      if (originalCount == 0)
+      if (originalCount == 0 && !UsingDirectiveLayout.HasExternAliases(compilationUnit))
          return null;
 
       // Get semantic model to find unused usings (CS8019)

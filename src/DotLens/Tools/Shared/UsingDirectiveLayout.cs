@@ -7,7 +7,7 @@ namespace DotLens.Tools.Shared;
 /// <summary>
 /// Rewrites the using lists of a C# file: the one of the compilation unit and the one of each namespace declaration.
 /// Keeps the file header first, keeps every preprocessor directive among the usings, and never moves a using across a
-/// directive.
+/// directive. Sorts the extern alias lists of the file the same way.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,9 +19,10 @@ namespace DotLens.Tools.Shared;
 /// header would leave a #define or #undef below it, it may end inside the #if blocks that enclose all the code.
 /// </para>
 /// <para>
-/// A run is a sequence of usings with no directive between them. Each run starts at a using whose leading trivia holds
-/// a directive, and that trivia up to its last directive or blank line stays at the start of the run. The methods sort
-/// usings only within a run, so no using enters or leaves an #if or #region block.
+/// A run is a sequence of entries of one list, usings or extern aliases, with no directive between them. Each run starts
+/// at an entry whose leading trivia holds a directive, and that trivia up to its last directive or blank line stays at
+/// the start of the run. The methods sort entries only within a run, so no entry enters or leaves an #if or #region
+/// block.
 /// </para>
 /// <para>
 /// The scope chain is the compilation unit, then each namespace declaration that is the only member of the one before.
@@ -60,8 +61,14 @@ internal static class UsingDirectiveLayout
       GetContainers(unit).SelectMany(c => GetUsings(c));
 
    /// <summary>
+   /// Returns whether the compilation unit or a namespace declaration in it has an extern alias.
+   /// </summary>
+   public static bool HasExternAliases(CompilationUnitSyntax unit) =>
+      GetContainers(unit).Any(c => GetExterns(c).Count > 0);
+
+   /// <summary>
    /// Removes the usings for which <paramref name="keep"/> returns false and sorts the rest within each run, in every
-   /// using list of <paramref name="unit"/>.
+   /// using list of <paramref name="unit"/>. Sorts every extern alias list within each run too.
    /// </summary>
    /// <param name="keep">Called with the usings of <paramref name="unit"/> itself.</param>
    /// <param name="newLine">The line break that ends a using whose line it shared with what no longer follows it.</param>
@@ -70,7 +77,7 @@ internal static class UsingDirectiveLayout
       Func<UsingDirectiveSyntax, bool> keep,
       string newLine)
    {
-      var containers = GetContainers(unit).Where(c => GetUsings(c).Count > 0).ToList();
+      var containers = GetContainers(unit).Where(c => GetUsings(c).Count > 0 || GetExterns(c).Count > 0).ToList();
       var markers = containers.ToDictionary(c => c, _ => new SyntaxAnnotation());
       var removedMarker = new SyntaxAnnotation();
       var removed = containers.SelectMany(c => GetUsings(c)).Where(u => !keep(u));
@@ -86,8 +93,17 @@ internal static class UsingDirectiveLayout
       foreach (var marker in markers.Values)
       {
          var container = marked.GetAnnotatedNodes(marker).Single();
-         var runs = SplitRuns(GetUsings(container), u => !u.HasAnnotation(removedMarker));
-         marked = Place(marked, container, runs, newLine);
+         if (GetExterns(container).Count > 0)
+         {
+            marked = Place(marked, container, ExternList, SplitRuns(GetExterns(container), _ => true), newLine);
+            container = marked.GetAnnotatedNodes(marker).Single();
+         }
+
+         if (GetUsings(container).Count > 0)
+         {
+            var runs = SplitRuns(GetUsings(container), u => !u.HasAnnotation(removedMarker));
+            marked = Place(marked, container, UsingList, runs, newLine);
+         }
       }
 
       return marked;
@@ -120,7 +136,7 @@ internal static class UsingDirectiveLayout
       var runs = SplitRuns(usings, _ => true);
       if (runs.Find(r => regions.At(r.Start).IsSubsetOf(codeRegions)) is { } target)
       {
-         target.Usings.Add((indented, -1));
+         target.Entries.Add((indented, -1));
       }
       else
       {
@@ -129,10 +145,10 @@ internal static class UsingDirectiveLayout
          var lead = SyntaxFactory.TriviaList(runs[0].Lead.Skip(headerLength));
          EnsureNoSymbolDirective(lead);
          runs[0] = runs[0] with { Lead = lead };
-         runs.Insert(0, new Run(header, [(indented, -1)], runs[0].Start));
+         runs.Insert(0, new Run<UsingDirectiveSyntax>(header, [(indented, -1)], runs[0].Start));
       }
 
-      return Place(unit, container, runs, newLine);
+      return Place(unit, container, UsingList, runs, newLine);
    }
 
    /// <summary>
@@ -145,90 +161,112 @@ internal static class UsingDirectiveLayout
    private static SyntaxNode? GetTargetList(CompilationUnitSyntax unit) =>
       GetScopeChain(unit).Find(c => GetUsings(c).Count > 0);
 
-   /// <param name="Lead">The trivia that stays at the start of the run, whether or not any of its usings remain.</param>
-   /// <param name="Usings">
-   /// The usings that remain, the first of them without the lead in its leading trivia, each with its index in the list
+   /// <summary>
+   /// One kind of list in a compilation unit or namespace declaration, and the order its entries sort in.
+   /// </summary>
+   /// <param name="IsFirst">Whether the list of a container comes first in it, with no extern alias above it.</param>
+   private sealed record EntryList<T>(
+      Func<SyntaxNode, SyntaxList<T>> Get,
+      Func<SyntaxNode, IEnumerable<T>, SyntaxNode> With,
+      IComparer<T> Order,
+      Func<SyntaxNode, bool> IsFirst)
+      where T : SyntaxNode;
+
+   private static readonly EntryList<UsingDirectiveSyntax> UsingList =
+      new(GetUsings, WithUsings, UsingComparer.Instance, c => GetExterns(c).Count == 0);
+
+   // Roslyn's Organize Imports sorts extern aliases by name, with System not first.
+   private static readonly EntryList<ExternAliasDirectiveSyntax> ExternList = new(
+      GetExterns,
+      WithExterns,
+      Comparer<ExternAliasDirectiveSyntax>.Create(
+         (x, y) => NameOrder.CompareText(x.Identifier.ValueText, y.Identifier.ValueText, systemFirst: false)),
+      _ => true);
+
+   /// <param name="Lead">The trivia that stays at the start of the run, whether or not any of its entries remain.</param>
+   /// <param name="Entries">
+   /// The entries that remain, the first of them without the lead in its leading trivia, each with its index in the list
    /// the run comes from, or -1 for a new using.
    /// </param>
-   /// <param name="Start">The position of the first using of the run in the tree that the run comes from.</param>
-   private sealed record Run(SyntaxTriviaList Lead, List<(UsingDirectiveSyntax Using, int Index)> Usings, int Start);
+   /// <param name="Start">The position of the first entry of the run in the tree that the run comes from.</param>
+   private sealed record Run<T>(SyntaxTriviaList Lead, List<(T Entry, int Index)> Entries, int Start)
+      where T : SyntaxNode;
 
-   private static List<Run> SplitRuns(SyntaxList<UsingDirectiveSyntax> usings, Func<UsingDirectiveSyntax, bool> keep)
+   private static List<Run<T>> SplitRuns<T>(SyntaxList<T> entries, Func<T, bool> keep)
+      where T : SyntaxNode
    {
-      var runs = new List<Run>();
-      for (var i = 0; i < usings.Count; i++)
+      var runs = new List<Run<T>>();
+      for (var i = 0; i < entries.Count; i++)
       {
-         var trivia = usings[i].GetLeadingTrivia();
-         var current = usings[i];
+         var trivia = entries[i].GetLeadingTrivia();
+         var current = entries[i];
          if (i == 0 || trivia.Any(t => t.IsDirective))
          {
             var leadLength = SplitIndex(trivia, canSplitAt: null);
             if (i == 0 && leadLength == 0)
                leadLength = SplitAfterLastLineBreak(trivia);
 
-            runs.Add(new Run(SyntaxFactory.TriviaList(trivia.Take(leadLength)), [], usings[i].SpanStart));
+            runs.Add(new Run<T>(SyntaxFactory.TriviaList(trivia.Take(leadLength)), [], entries[i].SpanStart));
             current = current.WithLeadingTrivia(trivia.Skip(leadLength));
          }
 
-         if (keep(usings[i]))
-            runs[^1].Usings.Add((current, i));
+         if (keep(entries[i]))
+            runs[^1].Entries.Add((current, i));
       }
 
       return runs;
    }
 
    /// <summary>
-   /// Replaces the usings of <paramref name="container"/> with the runs, each sorted, and keeps the lead of a run whose
-   /// usings were all removed.
+   /// Replaces the entries of <paramref name="list"/> in <paramref name="container"/> with the runs, each sorted, and
+   /// keeps the lead of a run whose entries were all removed.
    /// </summary>
-   private static CompilationUnitSyntax Place(
+   private static CompilationUnitSyntax Place<T>(
       CompilationUnitSyntax root,
       SyntaxNode container,
-      List<Run> runs,
+      EntryList<T> list,
+      List<Run<T>> runs,
       string newLine)
+      where T : SyntaxNode
    {
-      var usings = GetUsings(container);
-      var ordered = new List<(UsingDirectiveSyntax Using, int Index)>();
+      var entries = list.Get(container);
+      var ordered = new List<(T Entry, int Index)>();
       var pending = SyntaxTriviaList.Empty;
       for (var i = 0; i < runs.Count; i++)
       {
          var run = runs[i];
-         var atListStart = i > 0 && ordered.Count == 0 && pending.Count == 0 && GetExterns(container).Count == 0;
+         var atListStart = i > 0 && ordered.Count == 0 && pending.Count == 0 && list.IsFirst(container);
          pending = pending.AddRange(atListStart || EndsWithBlankLine(pending) ? TrimLeadingBlankLines(run.Lead) : run.Lead);
 
-         // The compiler requires the global usings of a file to precede its other usings.
-         var sorted = run.Usings
-            .OrderBy(u => u.Using.GlobalKeyword.IsKind(SyntaxKind.None) ? 1 : 0)
-            .ThenBy(u => GetSortKey(u.Using), SortKeyComparer.Instance)
-            .ToList();
+         var sorted = run.Entries.OrderBy(e => e.Entry, list.Order).ToList();
          if (sorted.Count == 0)
             continue;
 
-         var first = sorted[0].Using;
+         var first = sorted[0].Entry;
          sorted[0] = sorted[0] with
          {
-            Using = first.WithLeadingTrivia(pending.AddRange(TrimLeadingBlankLines(first.GetLeadingTrivia()))),
+            Entry = first.WithLeadingTrivia(pending.AddRange(TrimLeadingBlankLines(first.GetLeadingTrivia()))),
          };
          pending = SyntaxTriviaList.Empty;
          ordered.AddRange(sorted);
       }
 
-      var indentation = GetIndentation(usings[0].GetLeadingTrivia());
-      var placed = new List<UsingDirectiveSyntax>(ordered.Count);
+      var indentation = GetIndentation(entries[0].GetLeadingTrivia());
+      var placed = new List<T>(ordered.Count);
       for (var i = 0; i < ordered.Count; i++)
       {
          var (current, index) = ordered[i];
 
-         // A using from the middle of a shared line has no indentation of its own, since the space before it trails
-         // the using before it.
+         // An entry from the middle of a shared line has no indentation of its own, since the space before it trails
+         // the entry before it.
          var startsLine = i == 0 || EndsWithLineBreak(placed[i - 1].GetTrailingTrivia());
-         if (startsLine && index > 0 && !EndsWithLineBreak(usings[index - 1].GetTrailingTrivia()))
+         if (startsLine && index > 0 && !EndsWithLineBreak(entries[index - 1].GetTrailingTrivia()))
             current = current.WithLeadingTrivia(current.GetLeadingTrivia().AddRange(indentation));
 
          var trailing = current.GetTrailingTrivia();
-         var follower = i + 1 < ordered.Count ? ordered[i + 1].Index : usings.Count;
+         var follower = i + 1 < ordered.Count ? ordered[i + 1].Index : entries.Count;
 
-         // A using that shares its line with what follows keeps sharing it only with the same follower.
+         // An entry that shares its line with what follows keeps sharing it only with the same follower.
          if (index >= 0 && follower != index + 1 && !EndsWithLineBreak(trailing))
             current = current.WithTrailingTrivia(TrimTrailingWhitespace(trailing).Add(SyntaxFactory.EndOfLine(newLine)));
 
@@ -236,15 +274,15 @@ internal static class UsingDirectiveLayout
       }
 
       if (pending.Count == 0 && placed.Count > 0)
-         return root.ReplaceNode(container, WithUsings(container, placed));
+         return root.ReplaceNode(container, list.With(container, placed));
 
-      var next = usings[^1].GetLastToken().GetNextToken(includeZeroWidth: true);
+      var next = entries[^1].GetLastToken().GetNextToken(includeZeroWidth: true);
       var nextTrivia = placed.Count == 0 || EndsWithBlankLine(pending)
          ? TrimLeadingBlankLines(next.LeadingTrivia)
          : next.LeadingTrivia;
       return root.ReplaceSyntax(
          [container],
-         (_, rewritten) => WithUsings(rewritten, placed),
+         (_, rewritten) => list.With(rewritten, placed),
          [next],
          (_, rewritten) => rewritten.WithLeadingTrivia(pending.AddRange(nextTrivia)),
          [],
@@ -430,48 +468,191 @@ internal static class UsingDirectiveLayout
       trivia.IsKind(SyntaxKind.WhitespaceTrivia) || trivia.IsKind(SyntaxKind.EndOfLineTrivia);
 
    /// <summary>
-   /// Returns the identifiers of the using's name, which leave out a global:: qualifier.
-   /// </summary>
-   private static string[] GetSortKey(UsingDirectiveSyntax usingDirective) =>
-      usingDirective.Name is { } name
-         ? [.. name.DescendantTokens().Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText)]
-         : [];
-
-   /// <summary>
-   /// Orders the sort keys of usings: System first, then identifier by identifier, with case deciding only between
-   /// identifiers that are otherwise equal, and accents and width deciding nothing.
+   /// Orders usings as Roslyn's Organize Imports does: the global usings, then the others, each as namespace, static and
+   /// alias usings in turn.
    /// </summary>
    /// <remarks>
-   /// It compares in the invariant culture, so the current culture does not change the order.
+   /// Alias usings sort by alias name, then by target. Every other using sorts by name, and a global:: qualifier does not
+   /// count as part of the name.
    /// </remarks>
-   private sealed class SortKeyComparer : IComparer<string[]>
+   private sealed class UsingComparer : IComparer<UsingDirectiveSyntax>
    {
-      public static readonly SortKeyComparer Instance = new();
+      public static readonly UsingComparer Instance = new();
 
-      private static readonly CompareInfo Invariant = CultureInfo.InvariantCulture.CompareInfo;
-
-      public int Compare(string[]? x, string[]? y)
+      public int Compare(UsingDirectiveSyntax? x, UsingDirectiveSyntax? y)
       {
          if (x is null || y is null)
             return x is null ? (y is null ? 0 : -1) : 1;
 
-         var xIsSystem = x is ["System", ..];
-         var yIsSystem = y is ["System", ..];
-         if (xIsSystem != yIsSystem)
-            return xIsSystem ? -1 : 1;
+         // The compiler requires the global usings of a file to precede its other usings.
+         var compared = IsGlobal(y).CompareTo(IsGlobal(x));
+         if (compared == 0)
+            compared = GetGroup(x).CompareTo(GetGroup(y));
+         if (compared != 0)
+            return compared;
 
-         for (var i = 0; i < x.Length && i < y.Length; i++)
+         if (x.Alias is { } xAlias && y.Alias is { } yAlias)
          {
-            var ignoringCase = Invariant.Compare(
-               x[i], y[i], CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
-            var compared = ignoringCase != 0
-               ? ignoringCase
-               : Invariant.Compare(x[i], y[i], CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
+            compared = NameOrder.CompareText(
+               xAlias.Name.Identifier.ValueText, yAlias.Name.Identifier.ValueText, systemFirst: true);
+            return compared != 0 ? compared : NameOrder.CompareAliasTargets(x.NamespaceOrType, y.NamespaceOrType);
+         }
+
+         return NameOrder.CompareUsingNames(x.NamespaceOrType, y.NamespaceOrType);
+      }
+
+      private static bool IsGlobal(UsingDirectiveSyntax usingDirective) =>
+         !usingDirective.GlobalKeyword.IsKind(SyntaxKind.None);
+
+      /// <summary>
+      /// Returns 0 for a namespace using, 1 for a static using and 2 for an alias using. A static using that declares an
+      /// alias counts as an alias using.
+      /// </summary>
+      private static int GetGroup(UsingDirectiveSyntax usingDirective) =>
+         usingDirective.Alias is not null ? 2 : usingDirective.StaticKeyword.IsKind(SyntaxKind.None) ? 0 : 1;
+   }
+
+   /// <summary>
+   /// Compares names and types as Roslyn's Organize Imports does.
+   /// </summary>
+   /// <remarks>
+   /// <para>
+   /// A name compares part by part, and a name whose parts all match the start of the other sorts first. Two parts
+   /// compare by identifier, then by the number of type arguments, then type argument by type argument. A type argument
+   /// that is not a name compares by its first token, and the ?, [] and * of a type argument count for nothing.
+   /// </para>
+   /// <para>
+   /// Roslyn has no fixed order between a part without type arguments and a generic part with the same identifier, and
+   /// this class puts the part without type arguments first.
+   /// </para>
+   /// </remarks>
+   private static class NameOrder
+   {
+      private static readonly CompareInfo Invariant = CultureInfo.InvariantCulture.CompareInfo;
+
+      /// <summary>
+      /// Compares the names of two usings that declare no alias: System first, and a global:: qualifier left out.
+      /// </summary>
+      public static int CompareUsingNames(TypeSyntax x, TypeSyntax y) =>
+         x is NameSyntax xName && y is NameSyntax yName
+            ? CompareParts(GetParts(xName, skipGlobal: true), GetParts(yName, skipGlobal: true), systemFirst: true)
+            : CompareTypes(x, y);
+
+      /// <summary>
+      /// Compares the targets of two aliases with one name. Roslyn compares only targets that are both names.
+      /// </summary>
+      public static int CompareAliasTargets(TypeSyntax x, TypeSyntax y) =>
+         x is NameSyntax xName && y is NameSyntax yName ? CompareNames(xName, yName) : 0;
+
+      /// <summary>
+      /// Compares two identifiers ignoring case, accents and width, then with case, in the invariant culture so the
+      /// current culture does not change the order.
+      /// </summary>
+      /// <param name="systemFirst">Whether the identifier System sorts before every other.</param>
+      public static int CompareText(string x, string y, bool systemFirst)
+      {
+         if (systemFirst && (x == "System") != (y == "System"))
+            return x == "System" ? -1 : 1;
+
+         var ignoringCase = Invariant.Compare(
+            x, y, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
+         return ignoringCase != 0
+            ? ignoringCase
+            : Invariant.Compare(x, y, CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
+      }
+
+      private static int CompareTypes(TypeSyntax x, TypeSyntax y)
+      {
+         x = GetElementType(x);
+         y = GetElementType(y);
+         return x is NameSyntax xName && y is NameSyntax yName
+            ? CompareNames(xName, yName)
+            : CompareText(x.GetFirstToken().ValueText, y.GetFirstToken().ValueText, systemFirst: false);
+      }
+
+      private static int CompareNames(NameSyntax x, NameSyntax y) =>
+         CompareParts(GetParts(x, skipGlobal: false), GetParts(y, skipGlobal: false), systemFirst: false);
+
+      /// <param name="systemFirst">Whether the identifier System sorts first in the first part.</param>
+      private static int CompareParts(List<SimpleNameSyntax> x, List<SimpleNameSyntax> y, bool systemFirst)
+      {
+         for (var i = 0; i < x.Count && i < y.Count; i++)
+         {
+            var compared = CompareText(x[i].Identifier.ValueText, y[i].Identifier.ValueText, systemFirst && i == 0);
+            if (compared == 0)
+               compared = x[i].Arity.CompareTo(y[i].Arity);
+            if (compared == 0 && x[i] is GenericNameSyntax xGeneric && y[i] is GenericNameSyntax yGeneric)
+               compared = CompareTypeArguments(xGeneric.TypeArgumentList.Arguments, yGeneric.TypeArgumentList.Arguments);
+
             if (compared != 0)
                return compared;
          }
 
-         return x.Length.CompareTo(y.Length);
+         return x.Count.CompareTo(y.Count);
+      }
+
+      private static int CompareTypeArguments(SeparatedSyntaxList<TypeSyntax> x, SeparatedSyntaxList<TypeSyntax> y)
+      {
+         for (var i = 0; i < x.Count && i < y.Count; i++)
+         {
+            var compared = CompareTypes(x[i], y[i]);
+            if (compared != 0)
+               return compared;
+         }
+
+         return x.Count.CompareTo(y.Count);
+      }
+
+      /// <param name="skipGlobal">Whether to leave out a global:: qualifier.</param>
+      private static List<SimpleNameSyntax> GetParts(NameSyntax name, bool skipGlobal)
+      {
+         var parts = new List<SimpleNameSyntax>();
+         AddParts(name, parts);
+         if (skipGlobal && parts[0].Identifier.IsKind(SyntaxKind.GlobalKeyword))
+            parts.RemoveAt(0);
+
+         return parts;
+      }
+
+      private static void AddParts(NameSyntax name, List<SimpleNameSyntax> parts)
+      {
+         switch (name)
+         {
+            case QualifiedNameSyntax qualified:
+               AddParts(qualified.Left, parts);
+               parts.Add(qualified.Right);
+               break;
+            case AliasQualifiedNameSyntax aliasQualified:
+               parts.Add(aliasQualified.Alias);
+               parts.Add(aliasQualified.Name);
+               break;
+            case SimpleNameSyntax simple:
+               parts.Add(simple);
+               break;
+            default:
+               throw new InvalidOperationException($"Unexpected name: {name.Kind()}");
+         }
+      }
+
+      private static TypeSyntax GetElementType(TypeSyntax type)
+      {
+         while (true)
+         {
+            switch (type)
+            {
+               case NullableTypeSyntax nullable:
+                  type = nullable.ElementType;
+                  break;
+               case ArrayTypeSyntax array:
+                  type = array.ElementType;
+                  break;
+               case PointerTypeSyntax pointer:
+                  type = pointer.ElementType;
+                  break;
+               default:
+                  return type;
+            }
+         }
       }
    }
 
@@ -516,6 +697,14 @@ internal static class UsingDirectiveLayout
       BaseNamespaceDeclarationSyntax declaration => declaration.WithUsings(SyntaxFactory.List(usings)),
       _ => throw new InvalidOperationException($"Unexpected using container: {container.Kind()}"),
    };
+
+   private static SyntaxNode WithExterns(SyntaxNode container, IEnumerable<ExternAliasDirectiveSyntax> externs) =>
+      container switch
+      {
+         CompilationUnitSyntax unit => unit.WithExterns(SyntaxFactory.List(externs)),
+         BaseNamespaceDeclarationSyntax declaration => declaration.WithExterns(SyntaxFactory.List(externs)),
+         _ => throw new InvalidOperationException($"Unexpected using container: {container.Kind()}"),
+      };
 
    /// <summary>
    /// The branches of the #if blocks of a file. A branch runs from the end of the #if, #elif or #else line that opens it
