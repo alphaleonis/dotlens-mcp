@@ -57,3 +57,8 @@
 ## dotlens-zwvv — using grouping (2026-11-18)
 - c293, 4cfl and zwvv were one requirement found in three pieces: "order usings as Roslyn's Organize Imports does". When a fix's reviews keep finding the same kind of gap, rewrite the spec to the underlying requirement and its oracle (here Formatter.OrganizeImportsAsync) before filing the next piece.
 - Per bug the time split was roughly implementation 11-31 min, review and fix rounds 35-45 min, verification 5 min; the serial one-test-process rule and full-suite runs in every role dominate.
+
+## dotlens-c5qn — workspace document writes (2026-11-18)
+- A write that consults MSBuild must decide everything before the workspace writes: two review rounds found regressions where a post-apply evaluation or refusal left disk and the solutions disagreeing. Plan, refuse, then only write.
+- `dotnet msbuild -getItem` evaluates the outer build of a multi-targeted project and returns no Compile items; pass -p:TargetFramework per workspace project. Pass -noAutoResponse so a repo's Directory.Build.rsp cannot change the evaluation or drop a binlog.
+- Under the operator's new rule, implementers and reviewers ran filtered tests only; the conductor's single full suite (1466) passed first time.
