@@ -78,3 +78,7 @@
 ## WorkspaceManager group — 33p3, 57wx (2026-11-18)
 - A "project is broken" heuristic needs a positive signal of the broken state (no assets file naming the project), not only the symptom (no System.Object), or by-design projects get false warnings.
 - A single review plus a cheap fix check sufficed when the fix round was narrow predicates and docs; the costly multi-round groups were the ones where the fix round added new behavior.
+
+## Type members group — iqdg, p0yq, ynf5, mh8u (2026-11-19)
+- Check a nib's stated premise against the source of truth before briefing it as a decision: the brief repeated the nib's wrong reading of the C# spec, and the implementer rightly refused it.
+- When a heuristic keeps producing review findings round after round, replace it with the simplest rule that never loses information and record the trade-off as an open question.
