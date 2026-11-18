@@ -74,3 +74,7 @@
 ## Declaration display group — nvro, b6ue (2026-11-18)
 - Folding an implementer's out-of-scope finding into the fix round is cheap only when it is small: the folded type-declaration work (base lists, constructed generics, metadata interfaces) caused every regression the later reviews found. Fold mechanical leftovers; file design-sized ones.
 - Metadata lists a base class's interface on a derived type only when the derived type re-implements it; filtering by the base's AllInterfaces hides real declarations.
+
+## WorkspaceManager group — 33p3, 57wx (2026-11-18)
+- A "project is broken" heuristic needs a positive signal of the broken state (no assets file naming the project), not only the symptom (no System.Object), or by-design projects get false warnings.
+- A single review plus a cheap fix check sufficed when the fix round was narrow predicates and docs; the costly multi-round groups were the ones where the fix round added new behavior.
