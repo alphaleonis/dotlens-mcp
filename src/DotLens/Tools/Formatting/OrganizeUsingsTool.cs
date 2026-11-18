@@ -216,10 +216,9 @@ public class OrganizeUsingsTool
       if (semanticModel == null)
          return null;
 
-      // Get diagnostics for CS8019 (unnecessary using directive)
-      var compilation = semanticModel.Compilation;
-      var spansToRemove = compilation.GetDiagnostics(cancellationToken)
-          .Where(d => d.Id == "CS8019" && d.Location.SourceTree == syntaxTree)
+      // CS8019 marks an unnecessary using. A global using that only another file uses gets none, as UsingToolsLeftoversTests pins.
+      var spansToRemove = semanticModel.GetDiagnostics(cancellationToken: cancellationToken)
+          .Where(d => d.Id == "CS8019")
           .Select(d => d.Location.SourceSpan)
           .ToHashSet();
 

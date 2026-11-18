@@ -1,3 +1,4 @@
+using System.Globalization;
 using DotLens.Infrastructure;
 using Microsoft.CodeAnalysis.Formatting;
 
@@ -198,8 +199,7 @@ internal static class UsingDirectiveLayout
          // The compiler requires the global usings of a file to precede its other usings.
          var sorted = run.Usings
             .OrderBy(u => u.Using.GlobalKeyword.IsKind(SyntaxKind.None) ? 1 : 0)
-            .ThenBy(u => u.Using.Name?.ToString().StartsWith("System", StringComparison.Ordinal) == true ? 0 : 1)
-            .ThenBy(u => u.Using.Name?.ToString())
+            .ThenBy(u => GetSortKey(u.Using), SortKeyComparer.Instance)
             .ToList();
          if (sorted.Count == 0)
             continue;
@@ -401,7 +401,7 @@ internal static class UsingDirectiveLayout
       return endsWithBlankLine;
    }
 
-   private static bool EndsWithLineBreak(SyntaxTrivia trivia) => trivia.ToFullString() is [.., '\n' or '\r'];
+   private static bool EndsWithLineBreak(SyntaxTrivia trivia) => trivia.ToFullString() is [.., var last] && SyntaxFacts.IsNewLine(last);
 
    private static bool EndsWithLineBreak(SyntaxTriviaList trivia) => trivia.Count > 0 && EndsWithLineBreak(trivia[^1]);
 
@@ -428,6 +428,52 @@ internal static class UsingDirectiveLayout
 
    private static bool IsBlank(SyntaxTrivia trivia) =>
       trivia.IsKind(SyntaxKind.WhitespaceTrivia) || trivia.IsKind(SyntaxKind.EndOfLineTrivia);
+
+   /// <summary>
+   /// Returns the identifiers of the using's name, which leave out a global:: qualifier.
+   /// </summary>
+   private static string[] GetSortKey(UsingDirectiveSyntax usingDirective) =>
+      usingDirective.Name is { } name
+         ? [.. name.DescendantTokens().Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText)]
+         : [];
+
+   /// <summary>
+   /// Orders the sort keys of usings: System first, then identifier by identifier, with case deciding only between
+   /// identifiers that are otherwise equal, and accents and width deciding nothing.
+   /// </summary>
+   /// <remarks>
+   /// It compares in the invariant culture, so the current culture does not change the order.
+   /// </remarks>
+   private sealed class SortKeyComparer : IComparer<string[]>
+   {
+      public static readonly SortKeyComparer Instance = new();
+
+      private static readonly CompareInfo Invariant = CultureInfo.InvariantCulture.CompareInfo;
+
+      public int Compare(string[]? x, string[]? y)
+      {
+         if (x is null || y is null)
+            return x is null ? (y is null ? 0 : -1) : 1;
+
+         var xIsSystem = x is ["System", ..];
+         var yIsSystem = y is ["System", ..];
+         if (xIsSystem != yIsSystem)
+            return xIsSystem ? -1 : 1;
+
+         for (var i = 0; i < x.Length && i < y.Length; i++)
+         {
+            var ignoringCase = Invariant.Compare(
+               x[i], y[i], CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
+            var compared = ignoringCase != 0
+               ? ignoringCase
+               : Invariant.Compare(x[i], y[i], CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth);
+            if (compared != 0)
+               return compared;
+         }
+
+         return x.Length.CompareTo(y.Length);
+      }
+   }
 
    private static List<SyntaxNode> GetScopeChain(CompilationUnitSyntax unit)
    {
