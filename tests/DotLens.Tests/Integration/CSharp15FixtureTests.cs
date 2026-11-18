@@ -37,7 +37,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs", "NullConditionalIndexers.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs", "NullConditionalIndexers.cs", "DeclarationFidelity.cs", "OutlineFidelity.cs", "PartialBaseLists.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -344,6 +344,79 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             63:       public bool IsEmpty => ...;
             64:    }
             65: }
+         """.ReplaceLineEndings(),
+         result.Data.Outline);
+   }
+
+   [Fact]
+   public async Task FileOutline_DeclarationFidelity_PrintsEachDeclarationAsWritten()
+   {
+      var tool = new GetFileOutlineTool(_fixture.Workspace);
+      var path = _fixture.GetPath("OutlineFidelity.cs");
+      // A string written across lines holds the line break of the checked-out file.
+      var newLine = (await File.ReadAllTextAsync(path, CT)).Contains("\r\n", StringComparison.Ordinal) ? @"\r\n" : @"\n";
+
+      var result = await tool.GetFileOutlineAsync(path, includeDocComments: true, ct: CT);
+
+      Assert.Equal(
+         $$$$"""
+             1: namespace CSharp15TestProject;
+
+             3: public interface IDial
+             4: {
+             5:    int Read();
+             7:    int Level { get; }
+             9:    event EventHandler? Changed;
+            11:    int this[int index] { get; }
+            12: }
+            14: public interface IScale
+            15: {
+            16:    int Read();
+            17: }
+            19: public interface ISummable<TSelf> where TSelf : ISummable<TSelf>
+            20: {
+            21:    static abstract TSelf operator +(TSelf left, TSelf right);
+            23:    static abstract explicit operator int(TSelf value);
+            24: }
+            26: public sealed class Dial : IDial, IScale, ISummable<Dial>
+            27: {
+            28:    int IDial.Read();
+            30:    int IScale.Read();
+            32:    int IDial.Level => ...;
+            34:    event EventHandler? IDial.Changed { add; remove; }
+            36:    int IDial.this[int index] => ...;
+            38:    static Dial ISummable<Dial>.operator +(Dial left, Dial right);
+            40:    static explicit ISummable<Dial>.operator int(Dial value);
+            41: }
+            43: public readonly record struct Credit(decimal Amount)
+            44: {
+            45:    public static Credit operator -(Credit value);
+            47:    public static Credit operator checked -(Credit value);
+            49:    public static explicit operator int(Credit value);
+            51:    public static explicit operator checked int(Credit value);
+            52: }
+            54: public record class Receipt(string Number);
+            56: public unsafe struct Packet
+            57: {
+            58:    public fixed int Data[4];
+            60:    public fixed byte Header[2], Footer[8];
+            61: }
+            64: public class Archived
+            65: {
+            66:    private const string Unit;
+              :    /// <summary>Keeps the archive.</summary>
+              :    /// <summary>Saves the archive.</summary>
+            71:    public void Save();
+            73:    public void Store([System.ComponentModel.Description("first{{{{newLine}}}}second \"quoted\"")] string note = "line one{{{{newLine}}}}  line two");
+            79:    public void Measure(string label = $"{Unit} wide", string verbatim = $"{Unit}{{{{newLine}}}}{{tall}}");
+            84:    public void Label(string text = $"{{{Unit}}}{{{{newLine}}}}{{{{newLine}}}}  {{x}}");
+            89: }
+            91: public enum Tone
+            92: {
+            94:    Low,
+              :    /// <summary>The upper tone.</summary>
+            96:    High,
+            97: }
          """.ReplaceLineEndings(),
          result.Data.Outline);
    }
@@ -1742,7 +1815,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          {
             FullyQualifiedName = "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)",
             ContainingNamespace = "CSharp15TestProject",
-            Declaration = "public GridExtensions.extension(Grid)",
+            Declaration = "extension(Grid grid)",
          },
          result.Data);
    }
@@ -1820,6 +1893,39 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "AttributedFields.cs:19:25 Label",
       "AttributedFields.cs:5:21 AttributedFields",
       "AttributedFields.cs:8:22 Tag",
+      "DeclarationFidelity.cs:10:14 Inventory",
+      "DeclarationFidelity.cs:12:16 _count",
+      "DeclarationFidelity.cs:14:19 Count",
+      "DeclarationFidelity.cs:16:28 Peek",
+      "DeclarationFidelity.cs:18:19 Describe",
+      "DeclarationFidelity.cs:20:16 Schedule",
+      "DeclarationFidelity.cs:22:19 Convert",
+      "DeclarationFidelity.cs:26:21 ObliviousEcho",
+      "DeclarationFidelity.cs:28:25 Echo",
+      "DeclarationFidelity.cs:32:21 Doubling",
+      "DeclarationFidelity.cs:34:22 Twice",
+      "DeclarationFidelity.cs:37:18 IFirstRunner",
+      "DeclarationFidelity.cs:39:9 Run",
+      "DeclarationFidelity.cs:3:34 SlotReader",
+      "DeclarationFidelity.cs:42:18 ISecondRunner",
+      "DeclarationFidelity.cs:44:9 Run",
+      "DeclarationFidelity.cs:47:21 DualRunner",
+      "DeclarationFidelity.cs:49:22 CSharp15TestProject.IFirstRunner.Run",
+      "DeclarationFidelity.cs:51:23 CSharp15TestProject.ISecondRunner.Run",
+      "DeclarationFidelity.cs:54:22 SampleBuffer",
+      "DeclarationFidelity.cs:56:21 Samples",
+      "DeclarationFidelity.cs:59:18 IConvertsTo",
+      "DeclarationFidelity.cs:5:18 IProducer",
+      "DeclarationFidelity.cs:68:21 Reading",
+      "DeclarationFidelity.cs:77:22 SplitLedger",
+      "DeclarationFidelity.cs:79:16 Dispose",
+      "DeclarationFidelity.cs:7:12 Produce",
+      "DeclarationFidelity.cs:84:18 Clone",
+      "DeclarationFidelity.cs:87:13 Shade",
+      "DeclarationFidelity.cs:89:4 Light",
+      "DeclarationFidelity.cs:90:4 Dark",
+      "DeclarationFidelity.cs:93:21 Guards",
+      "DeclarationFidelity.cs:95:36 Missing",
       "DelegateSignatures.cs:3:21 DelegateSignatures",
       "DelegateSignatures.cs:5:24 Selector",
       "DelegateSignatures.cs:7:30 Formatter",
@@ -2014,6 +2120,51 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "NullConditionalIndexers.cs:77:23 Use",
       "NullConditionalIndexers.cs:7:16 this[]",
       "NullConditionalIndexers.cs:97:23 Rent",
+      "OutlineFidelity.cs:11:8 this[]",
+      "OutlineFidelity.cs:14:18 IScale",
+      "OutlineFidelity.cs:16:8 Read",
+      "OutlineFidelity.cs:19:18 ISummable",
+      "OutlineFidelity.cs:26:21 Dial",
+      "OutlineFidelity.cs:28:14 CSharp15TestProject.IDial.Read",
+      "OutlineFidelity.cs:30:15 CSharp15TestProject.IScale.Read",
+      "OutlineFidelity.cs:32:14 CSharp15TestProject.IDial.Level",
+      "OutlineFidelity.cs:34:30 CSharp15TestProject.IDial.Changed",
+      "OutlineFidelity.cs:36:14 CSharp15TestProject.IDial.this[]",
+      "OutlineFidelity.cs:3:18 IDial",
+      "OutlineFidelity.cs:43:31 Credit",
+      "OutlineFidelity.cs:43:46 Amount",
+      "OutlineFidelity.cs:54:21 Receipt",
+      "OutlineFidelity.cs:54:36 Number",
+      "OutlineFidelity.cs:56:22 Packet",
+      "OutlineFidelity.cs:58:21 Data",
+      "OutlineFidelity.cs:5:8 Read",
+      "OutlineFidelity.cs:60:22 Header",
+      "OutlineFidelity.cs:60:33 Footer",
+      "OutlineFidelity.cs:64:14 Archived",
+      "OutlineFidelity.cs:66:25 Unit",
+      "OutlineFidelity.cs:71:16 Save",
+      "OutlineFidelity.cs:73:16 Store",
+      "OutlineFidelity.cs:79:16 Measure",
+      "OutlineFidelity.cs:7:8 Level",
+      "OutlineFidelity.cs:84:16 Label",
+      "OutlineFidelity.cs:91:13 Tone",
+      "OutlineFidelity.cs:94:4 Low",
+      "OutlineFidelity.cs:96:4 High",
+      "OutlineFidelity.cs:9:24 Changed",
+      "PartialBaseLists.cs:10:22 MergedLedger",
+      "PartialBaseLists.cs:12:15 CompareTo",
+      "PartialBaseLists.cs:17:16 Dispose",
+      "PartialBaseLists.cs:20:24 Entry",
+      "PartialBaseLists.cs:20:34 Id",
+      "PartialBaseLists.cs:22:23 PostedEntry",
+      "PartialBaseLists.cs:26:23 DraftEntry",
+      "PartialBaseLists.cs:30:15 CompareTo",
+      "PartialBaseLists.cs:33:21 ConstructedUses",
+      "PartialBaseLists.cs:35:36 Stock",
+      "PartialBaseLists.cs:37:28 Numbers",
+      "PartialBaseLists.cs:39:25 Anything",
+      "PartialBaseLists.cs:5:14 LedgerBase",
+      "PartialBaseLists.cs:7:15 Seed",
       "PrimaryConstructors.cs:12:22 Pair",
       "PrimaryConstructors.cs:12:31 Left",
       "PrimaryConstructors.cs:12:41 Right",
@@ -2102,6 +2253,31 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.Equal(
          found.Data.Items.Where(s => s is not ConstructorSymbolResponse).Select(FormatPositionAndName).Order(StringComparer.Ordinal),
          searched.Data.Items.Select(FormatPositionAndName).Order(StringComparer.Ordinal));
+   }
+
+   [Fact]
+   public async Task SearchSymbols_ExplicitImplementations_ListNoAccessorsOrOperators()
+   {
+      var search = new SearchSymbolsTool(_fixture.Workspace);
+      var find = new FindSymbolsTool(_fixture.Workspace);
+
+      var searched = await search.SearchSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+      var found = await find.FindSymbolsAsync("*", maxResults: 500, cancellationToken: CT);
+
+      string[] expected =
+      [
+         "OutlineFidelity.cs:26:21 Dial",
+         "OutlineFidelity.cs:28:14 CSharp15TestProject.IDial.Read",
+         "OutlineFidelity.cs:30:15 CSharp15TestProject.IScale.Read",
+         "OutlineFidelity.cs:32:14 CSharp15TestProject.IDial.Level",
+         "OutlineFidelity.cs:34:30 CSharp15TestProject.IDial.Changed",
+         "OutlineFidelity.cs:36:14 CSharp15TestProject.IDial.this[]",
+      ];
+      Assert.Equal(expected, searched.Data.Items.Where(IsInDial).Select(FormatPositionAndName));
+      Assert.Equal(expected, found.Data.Items.Where(IsInDial).Select(FormatPositionAndName));
+
+      static bool IsInDial(SymbolResponse symbol) =>
+         symbol.Location is { FilePath: "OutlineFidelity.cs", Line: >= 26 and <= 41 };
    }
 
    private static string FormatPositionAndName(SymbolResponse symbol) =>
@@ -2259,9 +2435,129 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          [
             (typeof(ClassSymbolResponse), "public static class DelegateSignatures"),
             (typeof(DelegateSymbolResponse), "public delegate int Selector(ref int first, out int second, in int third, params int[] rest)"),
-            (typeof(DelegateSymbolResponse), "internal delegate string Formatter<T>(T? value, string format = \"G\", int width = 0)"),
+            (typeof(DelegateSymbolResponse), "internal delegate string? Formatter<T>(T? value, string? format = \"G\", int width = 0) where T : struct"),
          ],
          types.Select(t => (t.GetType(), t.Declaration)));
+   }
+
+   [Theory]
+   [InlineData(14, 19, "public ref int Count()")]
+   [InlineData(16, 28, "public ref readonly int Peek()")]
+   [InlineData(18, 19, "public string? Describe(string? prefix, string suffix, int? width = null)")]
+   [InlineData(20, 16, "public void Schedule(DayOfWeek day = DayOfWeek.Friday, decimal rate = 2.5m, float scale = 1.5f, double limit = double.PositiveInfinity, FileShare share = FileShare.Read | FileShare.Delete)")]
+   [InlineData(22, 19, "public TResult Convert<TResult>(TItem item) where TResult : struct")]
+   [InlineData(28, 25, "public static string Echo(string text)")]
+   [InlineData(34, 22, "public static int Twice(this int value)")]
+   [InlineData(49, 22, "void IFirstRunner.Run()")]
+   [InlineData(56, 21, "public fixed int Samples[4]")]
+   [InlineData(70, 41, "static explicit IConvertsTo<Reading>.operator int(Reading value)")]
+   [InlineData(72, 41, "static explicit IConvertsTo<Reading>.operator checked int(Reading value)")]
+   [InlineData(74, 41, "static implicit IConvertsTo<Reading>.operator long(Reading value)")]
+   [InlineData(95, 18, "public class ArgumentException : SystemException")]
+   public async Task FullDeclaration_Fidelity_MemberDeclarations(int line, int column, string expected)
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(
+         new LookupByPosition { FilePath = _fixture.GetPath("DeclarationFidelity.cs"), Line = line, Column = column }, cancellationToken: CT);
+
+      Assert.Equal(expected, result.Data.Declaration);
+   }
+
+   [Fact]
+   public async Task FullDeclaration_Fidelity_TypeDeclarations()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("DeclarationFidelity.cs"), ToolResultVerbosity.Full, CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(
+         [
+            "public delegate ref readonly int SlotReader<T>(T[] items, string? label) where T : struct",
+            "public interface IProducer<in TInput, out TOutput> where TOutput : class",
+            "public class Inventory<TItem> where TItem : notnull, IComparable<TItem>",
+            "public static class ObliviousEcho",
+            "public static class Doubling",
+            "public interface IFirstRunner",
+            "public interface ISecondRunner",
+            "public sealed class DualRunner : IFirstRunner, ISecondRunner",
+            "public unsafe struct SampleBuffer",
+            "public interface IConvertsTo<TSelf> where TSelf : IConvertsTo<TSelf>",
+            "public sealed class Reading : IConvertsTo<Reading>",
+            "public class SplitLedger : IDisposable, ICloneable",
+            "public class SplitLedger : IDisposable, ICloneable",
+            "public enum Shade : byte",
+            "public static class Guards",
+         ],
+         types.Select(t => t.Declaration));
+   }
+
+   [Fact]
+   public async Task FullDeclaration_Fidelity_PartialBaseLists()
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("PartialBaseLists.cs"), ToolResultVerbosity.Full, CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(
+         [
+            "public class LedgerBase(int seed)",
+            "public class MergedLedger(int seed) : LedgerBase(seed), IComparable<int>, IDisposable",
+            "public class MergedLedger(int seed) : LedgerBase(seed), IComparable<int>, IDisposable",
+            "public abstract record Entry(int Id)",
+            "public record PostedEntry(int Id) : Entry(Id), IEquatable<PostedEntry>",
+            "public record PostedEntry(int Id) : Entry(Id), IEquatable<PostedEntry>",
+            "public record DraftEntry(int Id) : Entry(Id), IComparable<DraftEntry>",
+            "public record DraftEntry(int Id) : Entry(Id), IComparable<DraftEntry>",
+            "public static class ConstructedUses",
+         ],
+         types.Select(t => t.Declaration));
+   }
+
+   /// <summary>
+   /// Return types that name a constructed generic, a type from a referenced assembly and a special type.
+   /// </summary>
+   [Theory]
+   [InlineData(35, 18, "public class Inventory<TItem> where TItem : notnull, IComparable<TItem>")]
+   [InlineData(37, 18, "public class List<T> : IList<T>, IReadOnlyList<T>, IList")]
+   [InlineData(39, 18, "public class Object")]
+   public async Task FullDeclaration_Fidelity_ReferencedTypeDeclarations(int line, int column, string expected)
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(
+         new LookupByPosition { FilePath = _fixture.GetPath("PartialBaseLists.cs"), Line = line, Column = column }, cancellationToken: CT);
+
+      Assert.Equal(expected, result.Data.Declaration);
+   }
+
+   [Theory]
+   [InlineData("PrimaryConstructors.cs", new[] { "public record Point(int X, int Y)", "public class Logger(string name)", "public struct Size(int width, int height)", "public record struct Pair(int Left, int Right)", "public class Counter(int start) : Tally(start)", "public class Tally(int initial)", "public interface IMeasurable" })]
+   [InlineData("MultiLineSignatures.cs", new[] { "public interface ILedger", "public class Ledger<TKey, TValue>(IDictionary<TKey, TValue> entries, string title = \"Ledger  one\") : ILedger, IDisposable where TKey : notnull, IComparable<TKey>", "public delegate TResult Folder<in TItem, TResult>(TResult seed, TItem item) where TResult : struct", "public static class LedgerExtensions", "extension<TKey, TValue>(Ledger<TKey, TValue> ledger) where TKey : notnull, IComparable<TKey>" })]
+   public async Task FullDeclaration_Fidelity_PrimaryConstructorsAndBaseLists(string fileName, string[] expected)
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath(fileName), ToolResultVerbosity.Full, CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(expected, types.Select(t => t.Declaration));
+   }
+
+   [Theory]
+   [InlineData("ExtensionMembers.cs", new[] { "extension(string text)", "extension(int number)", "extension<T>(IEnumerable<T> items)" })]
+   [InlineData("ExtensionBlockHeaders.cs", new[] { "extension(Catalog)", "extension<TKey, TValue>(IDictionary<TKey, TValue> map) where TKey : notnull where TValue : class, new()" })]
+   [InlineData("RefReceiverExtensions.cs", new[] { "extension(Meter meter)", "extension(ref Meter meter)", "extension(in Meter meter)", "extension(ref readonly Meter meter)", "extension(scoped ref Meter meter)", "extension(scoped Span<int> span)", "extension<T>(ref T value) where T : struct" })]
+   public async Task FullDeclaration_Fidelity_ExtensionBlockDeclarations(string fileName, string[] expected)
+   {
+      var tool = new GetFileOverviewTool(_fixture.Workspace);
+
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath(fileName), ToolResultVerbosity.Full, CT);
+
+      var types = result.Data.Types ?? throw new InvalidOperationException("Full verbosity lists types");
+      Assert.Equal(expected, types.OfType<ExtensionSymbolResponse>().Select(t => t.Declaration));
    }
 
    [Fact]

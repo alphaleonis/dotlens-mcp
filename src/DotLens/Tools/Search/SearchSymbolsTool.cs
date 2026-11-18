@@ -240,7 +240,7 @@ public class SearchSymbolsTool
                   continue;
             }
 
-            if (!RoslynHelpers.IsExplicitSourceSymbol(symbol))
+            if (!RoslynHelpers.IsExplicitSourceSymbol(symbol) || !SymbolFilterHelper.IsListedBySymbolSearch(symbol))
                continue;
 
             yield return symbol;

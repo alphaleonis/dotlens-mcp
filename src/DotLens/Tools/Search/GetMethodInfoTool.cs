@@ -92,7 +92,7 @@ public class GetMethodInfoTool
    /// </summary>
    private static string FormatMethodDeclaration(IMethodSymbol method)
    {
-      var display = method.ToDisplayString(RoslynDisplayFormats.MethodSignatureFull);
+      var display = RoslynDisplayFormats.ToDeclarationString(method, RoslynDisplayFormats.MethodSignatureFull);
 
       // async isn't part of the method signature in IL, but it's useful context
       // Insert it after the modifiers (static/virtual/etc.) but before the return type

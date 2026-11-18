@@ -9,6 +9,23 @@ namespace DotLens.Tools.Shared;
 public static class SymbolFilterHelper
 {
    /// <summary>
+   /// Returns whether symbol search lists the symbol.
+   /// </summary>
+   /// <remarks>
+   /// Search leaves out accessors and operators, and with them their explicit interface implementations, which Roslyn's
+   /// name lookup returns although it skips the ordinary ones.
+   /// </remarks>
+   public static bool IsListedBySymbolSearch(ISymbol symbol) => symbol switch
+   {
+      IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation } method =>
+         method.ExplicitInterfaceImplementations is not [{ MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion }, ..],
+      IMethodSymbol method => method.MethodKind is not (
+         MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove
+         or MethodKind.EventRaise or MethodKind.UserDefinedOperator or MethodKind.Conversion),
+      _ => true,
+   };
+
+   /// <summary>
    /// Checks if a symbol matches a single <see cref="SymbolKindFilter"/>.
    /// Handles both type kinds and member kinds in a unified way.
    /// </summary>

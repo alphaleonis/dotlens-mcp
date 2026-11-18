@@ -239,7 +239,7 @@ public class FindSymbolsTool
 
    private static bool MatchesAllFilters(ISymbol symbol, FilterCriteria criteria, GlobMatcher namespaceMatcher)
    {
-      if (!RoslynHelpers.IsExplicitSourceSymbol(symbol))
+      if (!RoslynHelpers.IsExplicitSourceSymbol(symbol) || !SymbolFilterHelper.IsListedBySymbolSearch(symbol))
          return false;
 
       // Filter by kind

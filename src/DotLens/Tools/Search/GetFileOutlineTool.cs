@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ModelContextProtocol.Server;
+using static DotLens.Infrastructure.SyntaxText;
 
 namespace DotLens.Tools.Search;
 
@@ -113,8 +114,11 @@ public class GetFileOutlineTool
          if (!_includeDocComments)
             return;
 
-         var trivia = node.GetLeadingTrivia();
-         foreach (var t in trivia)
+         // A doc comment can also sit between two attribute lists or after the last one.
+         SyntaxToken[] tokens = node is MemberDeclarationSyntax { AttributeLists.Count: > 0 } member
+            ? [.. member.AttributeLists.Select(a => a.OpenBracketToken), GetDeclarationStart(member)]
+            : [node.GetFirstToken()];
+         foreach (var t in tokens.SelectMany(token => token.LeadingTrivia))
          {
             if (t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia) ||
                 t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
@@ -138,7 +142,13 @@ public class GetFileOutlineTool
       }
 
       private static int GetLine(SyntaxNode node) =>
-         node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+         GetDeclarationStart(node).GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+      // A declaration's line is that of its first modifier or keyword, not of the attributes above it.
+      private static SyntaxToken GetDeclarationStart(SyntaxNode node) =>
+         node is MemberDeclarationSyntax { AttributeLists: [.., var lastAttributes] }
+            ? lastAttributes.GetLastToken().GetNextToken()
+            : node.GetFirstToken();
 
       /// <summary>
       /// Checks if a declaration is private using the semantic model.
@@ -191,7 +201,7 @@ public class GetFileOutlineTool
 
       public override void VisitRecordDeclaration(RecordDeclarationSyntax node)
       {
-         var keyword = node.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record";
+         var keyword = node.ClassOrStructKeyword.IsKind(SyntaxKind.None) ? "record" : $"record {node.ClassOrStructKeyword}";
          VisitTypeDeclaration(node, keyword);
       }
 
@@ -215,6 +225,7 @@ public class GetFileOutlineTool
          _indentLevel++;
          foreach (var member in node.Members)
          {
+            AppendDocComment(member);
             var value = member.EqualsValue != null ? $" = {OneLine(member.EqualsValue.Value)}" : "";
             AppendLine(GetLine(member), $"{member.Identifier}{value},");
          }
@@ -271,7 +282,9 @@ public class GetFileOutlineTool
          var typeParams = OneLine(node.TypeParameterList);
          var constraints = FormatConstraints(node.ConstraintClauses);
 
-         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} {node.Identifier}{typeParams}{OneLine(node.ParameterList)}{constraints};".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} {explicitInterface}{node.Identifier}{typeParams}{OneLine(node.ParameterList)}{constraints};".TrimStart());
       }
 
       public override void VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
@@ -304,7 +317,9 @@ public class GetFileOutlineTool
          var modifiers = OneLine(node.Modifiers);
          var suffix = FormatPropertyBody(node.AccessorList, node.ExpressionBody);
 
-         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} {node.Identifier}{suffix}".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} {explicitInterface}{node.Identifier}{suffix}".TrimStart());
       }
 
       public override void VisitIndexerDeclaration(IndexerDeclarationSyntax node)
@@ -316,7 +331,9 @@ public class GetFileOutlineTool
          var modifiers = OneLine(node.Modifiers);
          var suffix = FormatPropertyBody(node.AccessorList, node.ExpressionBody);
 
-         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} this{OneLine(node.ParameterList)}{suffix}".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Type)} {explicitInterface}this{OneLine(node.ParameterList)}{suffix}".TrimStart());
       }
 
       public override void VisitEventDeclaration(EventDeclarationSyntax node)
@@ -326,7 +343,8 @@ public class GetFileOutlineTool
 
          AppendDocComment(node);
          var modifiers = OneLine(node.Modifiers);
-         AppendLine(GetLine(node), $"{modifiers} event {OneLine(node.Type)} {node.Identifier} {{ add; remove; }}".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+         AppendLine(GetLine(node), $"{modifiers} event {OneLine(node.Type)} {explicitInterface}{node.Identifier} {{ add; remove; }}".TrimStart());
       }
 
       public override void VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
@@ -347,7 +365,8 @@ public class GetFileOutlineTool
 
          AppendDocComment(node);
          var modifiers = OneLine(node.Modifiers);
-         var names = string.Join(", ", node.Declaration.Variables.Select(v => v.Identifier.ToString()));
+         // A fixed-size buffer's size follows its name, as in "fixed int Data[4]".
+         var names = string.Join(", ", node.Declaration.Variables.Select(v => $"{v.Identifier}{OneLine(v.ArgumentList)}"));
          AppendLine(GetLine(node), $"{modifiers} {OneLine(node.Declaration.Type)} {names};".TrimStart());
       }
 
@@ -371,7 +390,9 @@ public class GetFileOutlineTool
 
          AppendDocComment(node);
          var modifiers = OneLine(node.Modifiers);
-         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} operator {node.OperatorToken}{OneLine(node.ParameterList)};".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+         var isChecked = node.CheckedKeyword.IsKind(SyntaxKind.None) ? "" : "checked ";
+         AppendLine(GetLine(node), $"{modifiers} {OneLine(node.ReturnType)} {explicitInterface}operator {isChecked}{node.OperatorToken}{OneLine(node.ParameterList)};".TrimStart());
       }
 
       public override void VisitConversionOperatorDeclaration(ConversionOperatorDeclarationSyntax node)
@@ -382,7 +403,9 @@ public class GetFileOutlineTool
          AppendDocComment(node);
          var modifiers = OneLine(node.Modifiers);
          var implicitExplicit = node.ImplicitOrExplicitKeyword.ToString();
-         AppendLine(GetLine(node), $"{modifiers} {implicitExplicit} operator {OneLine(node.Type)}{OneLine(node.ParameterList)};".TrimStart());
+         var explicitInterface = OneLine(node.ExplicitInterfaceSpecifier);
+         var isChecked = node.CheckedKeyword.IsKind(SyntaxKind.None) ? "" : "checked ";
+         AppendLine(GetLine(node), $"{modifiers} {implicitExplicit} {explicitInterface}operator {isChecked}{OneLine(node.Type)}{OneLine(node.ParameterList)};".TrimStart());
       }
 
       private static string FormatBaseList(BaseListSyntax? baseList) =>
@@ -390,52 +413,6 @@ public class GetFileOutlineTool
 
       private static string FormatConstraints(SyntaxList<TypeParameterConstraintClauseSyntax> clauses) =>
          clauses.Count > 0 ? " " + string.Join(" ", clauses.Select(c => OneLine(c))) : "";
-
-      private static string OneLine(SyntaxNode? node) =>
-         node != null ? OneLine(node.DescendantTokens()) : "";
-
-      /// <summary>
-      /// Returns the tokens' source text with the whitespace, line breaks and comments between two tokens replaced by one
-      /// space. No space goes after an opening bracket, before a closing bracket or a comma, or around a dot or <c>::</c>.
-      /// </summary>
-      private static string OneLine(IEnumerable<SyntaxToken> tokens)
-      {
-         var text = new StringBuilder();
-         SyntaxToken? previous = null;
-         foreach (var token in tokens)
-         {
-            if (previous is { } before
-               && (before.HasTrailingTrivia || token.HasLeadingTrivia)
-               && !IsSpaceFreeAfter(before)
-               && !IsSpaceFreeBefore(token))
-            {
-               text.Append(' ');
-            }
-
-            text.Append(token.Text);
-            previous = token;
-         }
-
-         return text.ToString();
-      }
-
-      private static bool IsSpaceFreeAfter(SyntaxToken token) => token.Kind() switch
-      {
-         SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or SyntaxKind.DotToken or SyntaxKind.ColonColonToken => true,
-         SyntaxKind.LessThanToken => IsTypeListAngleBracket(token),
-         _ => false,
-      };
-
-      private static bool IsSpaceFreeBefore(SyntaxToken token) => token.Kind() switch
-      {
-         SyntaxKind.CloseParenToken or SyntaxKind.CloseBracketToken or SyntaxKind.CommaToken or SyntaxKind.DotToken or SyntaxKind.ColonColonToken => true,
-         SyntaxKind.GreaterThanToken => IsTypeListAngleBracket(token),
-         _ => false,
-      };
-
-      // In a constant expression, such as a default parameter value, "<" and ">" compare and keep their spaces.
-      private static bool IsTypeListAngleBracket(SyntaxToken token) =>
-         token.Parent is TypeParameterListSyntax or TypeArgumentListSyntax or FunctionPointerParameterListSyntax;
 
       private static string FormatPropertyBody(AccessorListSyntax? accessorList, ArrowExpressionClauseSyntax? expressionBody)
       {

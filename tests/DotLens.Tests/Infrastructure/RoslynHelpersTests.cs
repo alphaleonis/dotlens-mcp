@@ -1,5 +1,6 @@
 using DotLens.Infrastructure;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace DotLens.Tests.Infrastructure;
@@ -197,4 +198,35 @@ public class Derived : Base { }";
    }
 
    #endregion
+
+   /// <summary>
+   /// Types compiled into a referenced assembly, where metadata lists an interface of the base class on a derived type
+   /// only when the derived type implements it again.
+   /// </summary>
+   [Theory]
+   [InlineData("Reimplementing", "public class Reimplementing : Base, IShape")]
+   [InlineData("Inheriting", "public class Inheriting : Base")]
+   [InlineData("Square", "public sealed class Square : IShape")]
+   public void GetDeclaration_CompiledType_ListsReimplementedInterfaces(string typeName, string expected)
+   {
+      var library = CSharpCompilation.Create(
+         "CompiledShapes",
+         [CSharpSyntaxTree.ParseText("""
+            public interface IArea { double Area(); }
+            public interface IShape : IArea { }
+            public class Base : IShape { public double Area() => 0; }
+            public class Reimplementing : Base, IShape { double IArea.Area() => 1; }
+            public class Inheriting : Base { }
+            public sealed class Square : IShape, IArea { public double Area() => 4; }
+            """, cancellationToken: TestContext.Current.CancellationToken)],
+         TestHelpers.CoreReferences,
+         new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+      using var image = new MemoryStream();
+      var emitted = library.Emit(image, cancellationToken: TestContext.Current.CancellationToken);
+      Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
+      var consumer = CSharpCompilation.Create("Consumer", references: [.. TestHelpers.CoreReferences, MetadataReference.CreateFromImage(image.ToArray())]);
+      var type = consumer.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the reference");
+
+      Assert.Equal(expected, RoslynHelpers.GetDeclaration(type));
+   }
 }

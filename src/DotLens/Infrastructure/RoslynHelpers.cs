@@ -1164,13 +1164,17 @@ public static class RoslynHelpers
    /// </summary>
    internal static string GetDeclaration(ISymbol symbol)
    {
+      if (symbol is IFieldSymbol { IsFixedSizeBuffer: true } buffer)
+         return BuildFixedSizeBufferDeclaration(buffer);
+
       // For members, Roslyn's format includes accessibility and modifiers
       if (symbol is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol)
-         return symbol.ToDisplayString(RoslynDisplayFormats.MethodSignatureCompact);
+         return RoslynDisplayFormats.ToDeclarationString(symbol, RoslynDisplayFormats.MethodSignatureCompact);
 
-      // For types, SymbolDisplayMemberOptions don't apply - must build manually
+      // For types, SymbolDisplayMemberOptions don't apply - must build manually.
+      // A declaration describes the definition, so a constructed type such as List<int> shows List<T>.
       if (symbol is INamedTypeSymbol type)
-         return BuildTypeDeclaration(type);
+         return BuildTypeDeclaration(type.OriginalDefinition);
 
       // For namespaces
       if (symbol is INamespaceSymbol ns)
@@ -1180,11 +1184,20 @@ public static class RoslynHelpers
    }
 
    /// <summary>
-   /// Format for type names with generics (no accessibility/modifiers).
+   /// Format for type names with type parameters, variance and constraints (no accessibility/modifiers).
    /// </summary>
    private static readonly SymbolDisplayFormat TypeNameFormat = new(
       typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameOnly,
-      genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters);
+      genericsOptions: RoslynDisplayFormats.MethodSignatureCompact.GenericsOptions,
+      miscellaneousOptions: RoslynDisplayFormats.MethodSignatureCompact.MiscellaneousOptions);
+
+   /// <summary>
+   /// Format for a base type, whose type arguments' constraints belong to the declaring type.
+   /// </summary>
+   private static readonly SymbolDisplayFormat BaseTypeFormat = new(
+      typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameOnly,
+      genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+      miscellaneousOptions: RoslynDisplayFormats.MethodSignatureCompact.MiscellaneousOptions);
 
    /// <summary>
    /// Format for a delegate's return type, name and parameters, with the conventions of a method declaration.
@@ -1192,13 +1205,50 @@ public static class RoslynHelpers
    private static readonly SymbolDisplayFormat DelegateSignatureFormat = new(
       typeQualificationStyle: RoslynDisplayFormats.MethodSignatureCompact.TypeQualificationStyle,
       genericsOptions: RoslynDisplayFormats.MethodSignatureCompact.GenericsOptions,
+      memberOptions: RoslynDisplayFormats.MethodSignatureCompact.MemberOptions,
       delegateStyle: SymbolDisplayDelegateStyle.NameAndSignature,
       parameterOptions: RoslynDisplayFormats.MethodSignatureCompact.ParameterOptions,
       miscellaneousOptions: RoslynDisplayFormats.MethodSignatureCompact.MiscellaneousOptions);
 
+   // Roslyn displays a fixed-size buffer as a pointer field, without its size.
+   private static string BuildFixedSizeBufferDeclaration(IFieldSymbol buffer)
+   {
+      var format = RoslynDisplayFormats.MethodSignatureCompact.RemoveMemberOptions(SymbolDisplayMemberOptions.IncludeType);
+      var modifiers = buffer.ToDisplayParts(format).TakeWhile(p => p.Kind != SymbolDisplayPartKind.FieldName);
+      var elementType = buffer.Type is IPointerTypeSymbol pointer ? pointer.PointedAtType : buffer.Type;
+      return $"{string.Concat(modifiers)}fixed {elementType.ToDisplayString(RoslynDisplayFormats.MethodSignatureCompact)} {buffer.Name}[{buffer.FixedSize}]";
+   }
+
+   // Roslyn displays an extension block with its containing type and without the receiver's name.
+   private static string BuildExtensionDeclaration(INamedTypeSymbol extension)
+   {
+      var sb = new System.Text.StringBuilder("extension");
+      if (extension.TypeParameters.Length > 0)
+         sb.Append('<').Append(string.Join(", ", extension.TypeParameters.Select(t => t.Name))).Append('>');
+
+      sb.Append('(');
+      if (extension.ExtensionParameter is { } receiver)
+         sb.Append(RoslynDisplayFormats.ToDeclarationString(receiver, RoslynDisplayFormats.MethodSignatureCompact));
+      sb.Append(')');
+
+      var constraints = string.Concat(extension.ToDisplayParts(TypeNameFormat)
+         .SkipWhile(p => !(p.Kind == SymbolDisplayPartKind.Keyword && p.ToString() == "where")));
+      if (constraints.Length > 0)
+         sb.Append(' ').Append(constraints);
+
+      return sb.ToString();
+   }
+
    private static string BuildTypeDeclaration(INamedTypeSymbol type)
    {
+      if (type.IsExtension)
+         return BuildExtensionDeclaration(type);
+
       var sb = new System.Text.StringBuilder();
+      var declarations = type.DeclaringSyntaxReferences
+         .Select(r => r.GetSyntax())
+         .OfType<MemberDeclarationSyntax>()
+         .ToList();
 
       // Accessibility
       sb.Append(type.DeclaredAccessibility switch
@@ -1221,6 +1271,8 @@ public static class RoslynHelpers
          sb.Append("sealed ");
       if (type.IsReadOnly && type.TypeKind == TypeKind.Struct)
          sb.Append("readonly ");
+      if (declarations.Any(d => d.Modifiers.Any(SyntaxKind.UnsafeKeyword)))
+         sb.Append("unsafe ");
       if (type.IsRefLikeType)
          sb.Append("ref ");
       if (type.IsRecord)
@@ -1238,9 +1290,97 @@ public static class RoslynHelpers
       });
 
       // Name with type parameters, plus the return type and parameters of a delegate
-      sb.Append(type.ToDisplayString(type.TypeKind == TypeKind.Delegate ? DelegateSignatureFormat : TypeNameFormat));
+      if (type.TypeKind == TypeKind.Delegate)
+      {
+         sb.Append(RoslynDisplayFormats.ToDeclarationString(type, DelegateSignatureFormat));
+         return sb.ToString();
+      }
 
-      return sb.ToString().TrimEnd();
+      // The primary constructor and the base list go between the name and the constraints.
+      var parts = type.ToDisplayParts(TypeNameFormat).ToList();
+      var constraintsStart = parts.FindIndex(p => p.Kind == SymbolDisplayPartKind.Keyword && p.ToString() == "where");
+
+      // The format writes a keyword for a special type such as System.String, but the declared name stays a name.
+      var nameIndex = parts.FindIndex(p => SymbolEqualityComparer.Default.Equals(p.Symbol, type));
+      var head = parts.Take(constraintsStart < 0 ? parts.Count : constraintsStart).Select((p, i) => i == nameIndex ? type.Name : p.ToString());
+      sb.Append(string.Concat(head).TrimEnd());
+
+      var primaryConstructor = declarations.OfType<TypeDeclarationSyntax>().Select(d => d.ParameterList).FirstOrDefault(p => p is not null);
+      sb.Append(SyntaxText.OneLine(primaryConstructor));
+
+      var baseLists = declarations.OfType<BaseTypeDeclarationSyntax>().Select(d => d.BaseList).OfType<BaseListSyntax>().ToList();
+      var baseTypes = (declarations.Count, baseLists.Count) switch
+      {
+         (0, _) => GetMetadataBaseTypes(type),
+         (_, <= 1) => baseLists.SelectMany(b => b.Types).Select(t => SyntaxText.OneLine(t)).ToList(),
+         _ => GetMergedBaseTypes(type, baseLists),
+      };
+      if (baseTypes.Count > 0)
+         sb.Append(" : ").Append(string.Join(", ", baseTypes));
+
+      if (constraintsStart >= 0)
+         sb.Append(' ').Append(string.Concat(parts.Skip(constraintsStart)));
+
+      return sb.ToString();
+   }
+
+   /// <summary>
+   /// Returns the base list of a partial type whose parts each list base types: the base class with the primary
+   /// constructor's arguments, then the interfaces in the order the parts first name them.
+   /// </summary>
+   /// <remarks>
+   /// The parts may spell one base type differently, through an alias or a namespace, or name it twice, so the list
+   /// comes from the symbol, not from the text.
+   /// </remarks>
+   private static List<string> GetMergedBaseTypes(INamedTypeSymbol type, List<BaseListSyntax> baseLists)
+   {
+      var baseTypes = new List<string>();
+      if (type is { TypeKind: TypeKind.Class, BaseType: { SpecialType: not SpecialType.System_Object } baseClass })
+      {
+         var arguments = baseLists.SelectMany(b => b.Types).OfType<PrimaryConstructorBaseTypeSyntax>().FirstOrDefault()?.ArgumentList;
+         baseTypes.Add(baseClass.ToDisplayString(BaseTypeFormat) + SyntaxText.OneLine(arguments));
+      }
+
+      // A record implements IEquatable of itself without naming it.
+      var namesEquatable = baseLists.SelectMany(b => b.Types).Any(t => GetRightmostName(t.Type) is GenericNameSyntax { Identifier.ValueText: "IEquatable" });
+      baseTypes.AddRange(type.Interfaces
+         .Where(i => namesEquatable || !IsRecordEquatable(type, i))
+         .Select(i => i.ToDisplayString(BaseTypeFormat)));
+      return baseTypes;
+   }
+
+   private static bool IsRecordEquatable(INamedTypeSymbol type, INamedTypeSymbol implemented) =>
+      type.IsRecord
+      && implemented is { Name: "IEquatable", ContainingNamespace.Name: "System", TypeArguments: [var argument] }
+      && SymbolEqualityComparer.Default.Equals(argument, type);
+
+   private static SimpleNameSyntax? GetRightmostName(TypeSyntax type) => type switch
+   {
+      SimpleNameSyntax name => name,
+      QualifiedNameSyntax qualified => qualified.Right,
+      AliasQualifiedNameSyntax aliased => aliased.Name,
+      _ => null,
+   };
+
+   /// <summary>
+   /// Returns the base list of a type without source: its base class and enum base when C# would write them, and the
+   /// interfaces that no other listed interface brings in.
+   /// </summary>
+   /// <remarks>
+   /// Metadata lists every interface a type implements, including those that its other interfaces bring in. It lists an
+   /// interface of the base class only when the type implements it again, so that one stays.
+   /// </remarks>
+   private static List<string> GetMetadataBaseTypes(INamedTypeSymbol type)
+   {
+      var baseTypes = new List<string>();
+      if (type is { TypeKind: TypeKind.Enum, EnumUnderlyingType: { SpecialType: not SpecialType.System_Int32 } underlying })
+         baseTypes.Add(underlying.ToDisplayString(BaseTypeFormat));
+      if (type is { TypeKind: TypeKind.Class, BaseType: { SpecialType: not SpecialType.System_Object } baseClass })
+         baseTypes.Add(baseClass.ToDisplayString(BaseTypeFormat));
+
+      var implied = type.Interfaces.SelectMany(i => i.AllInterfaces).ToHashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+      baseTypes.AddRange(type.Interfaces.Where(i => !implied.Contains(i)).Select(i => i.ToDisplayString(BaseTypeFormat)));
+      return baseTypes;
    }
 
 }

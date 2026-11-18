@@ -67,7 +67,7 @@ public class AnalyzeMethodTool
          {
             TypeName = containingType?.ToDisplayString() ?? "(global)",
             MethodName = method.Name,
-            Signature = method.ToDisplayString(RoslynDisplayFormats.MethodSignatureCompact),
+            Signature = RoslynDisplayFormats.ToDeclarationString(method, RoslynDisplayFormats.MethodSignatureCompact),
             Location = lineSpan.ToSymbolLocation(_workspaceManager.FormatPath),
             CallerCount = callerCount,
             Callers = callers,

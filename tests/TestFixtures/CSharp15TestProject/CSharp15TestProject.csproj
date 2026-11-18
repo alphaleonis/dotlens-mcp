@@ -4,6 +4,7 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- PrimaryConstructors.cs declares body-less types whose primary-constructor parameters nothing reads. -->
     <NoWarn>$(NoWarn);CS9113</NoWarn>
   </PropertyGroup>
