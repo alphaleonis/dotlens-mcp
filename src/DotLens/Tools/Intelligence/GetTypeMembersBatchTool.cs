@@ -1,6 +1,7 @@
 using System.ComponentModel;
 
 using DotLens.Infrastructure;
+using DotLens.Infrastructure.SymbolLookup;
 using Microsoft.CodeAnalysis;
 
 using ModelContextProtocol.Server;
@@ -12,10 +13,12 @@ namespace DotLens.Tools.Intelligence;
 public class GetTypeMembersBatchTool
 {
    private readonly IReadOnlyWorkspace _workspaceManager;
+   private readonly SymbolLookupService _symbolLookup;
 
-   public GetTypeMembersBatchTool(IReadOnlyWorkspace workspaceManager)
+   public GetTypeMembersBatchTool(IReadOnlyWorkspace workspaceManager, SymbolLookupService symbolLookup)
    {
       _workspaceManager = workspaceManager;
+      _symbolLookup = symbolLookup;
    }
 
    [McpServerTool(Name = "get_type_members_batch", ReadOnly = true, OpenWorld = false)]
@@ -24,7 +27,7 @@ public class GetTypeMembersBatchTool
       [Description("Array of type names to look up")] List<string> typeNames,
       [Description("Filter by member kind")]
       MemberKindFilter? memberKind = null,
-      [Description("Also list members inherited from base classes other than object, static ones included. Private members, constructors, destructors and members that a more derived class overrides or hides are left out.")]
+      [Description("Also list members inherited from base classes other than object, static ones included. Members the type cannot access, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,
       [Description("Max members per type")]
       [PositiveInteger]
@@ -39,30 +42,23 @@ public class GetTypeMembersBatchTool
       foreach (var typeName in typeNames)
       {
          cancellationToken.ThrowIfCancellationRequested();
-         // Use FindTypeWithCompilationAsync for ambiguity detection
-         // Note: Using direct lookup instead of SymbolLookupService because batch semantics
-         // require continue-on-failure, not throw-on-not-found
-         var lookupResult = await _workspaceManager.FindTypeWithCompilationAsync(typeName, cancellationToken: cancellationToken);
-         if (lookupResult == null)
+
+         SymbolLookupResult<INamedTypeSymbol> lookupResult;
+         try
          {
-            errors.Add(new TypeMembersError { TypeName = typeName, Error = $"Type not found: {typeName}" });
+            lookupResult = await _symbolLookup.FindSingleAsync<INamedTypeSymbol>(new LookupByName { Name = typeName }, cancellationToken: cancellationToken);
+         }
+         catch (ToolException ex)
+         {
+            var error = ex.Code == ErrorCodes.SymbolNotFound ? $"Type not found: {typeName}" : ex.Message;
+            errors.Add(new TypeMembersError { TypeName = typeName, Error = error });
             continue;
          }
-         var typeSymbol = lookupResult.Type;
+         var typeSymbol = lookupResult.Symbol;
 
-         var members = RoslynHelpers.GetTypeMembers(typeSymbol, includeInherited);
-
-         if (memberKind.HasValue)
-         {
-            members = memberKind.Value switch
-            {
-               MemberKindFilter.Method => members.OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary).Cast<ISymbol>(),
-               MemberKindFilter.Property => members.OfType<IPropertySymbol>().Cast<ISymbol>(),
-               MemberKindFilter.Field => members.OfType<IFieldSymbol>().Cast<ISymbol>(),
-               MemberKindFilter.Event => members.OfType<IEventSymbol>().Cast<ISymbol>(),
-               _ => throw new ArgumentOutOfRangeException(nameof(memberKind), memberKind.Value, "Unexpected member kind filter"),
-            };
-         }
+         var members = RoslynHelpers.GetTypeMembers(typeSymbol, lookupResult.Compilation, includeInherited);
+         if (memberKind is { } kind)
+            members = members.Where(m => RoslynHelpers.MatchesMemberKind(m, kind));
 
          var memberList = members
             .Take(maxResultsPerType)

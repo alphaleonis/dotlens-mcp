@@ -85,7 +85,7 @@ public class GetTypeOverviewTool
       var members = typeSymbol.GetMembers();
       var memberCounts = new TypeMemberCounts
       {
-         Methods = members.OfType<IMethodSymbol>().Count(m => m.MethodKind == MethodKind.Ordinary),
+         Methods = members.OfType<IMethodSymbol>().Count(m => RoslynHelpers.MatchesMemberKind(m, MemberKindFilter.Method)),
          Properties = members.OfType<IPropertySymbol>().Count(),
          Fields = members.OfType<IFieldSymbol>().Count(f => !f.IsImplicitlyDeclared),
          Events = members.OfType<IEventSymbol>().Count(),

@@ -1,4 +1,5 @@
 using DotLens.Infrastructure;
+using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Intelligence;
 using Xunit;
 
@@ -13,7 +14,7 @@ public class GetTypeMembersBatchToolTests : TestFixtureTestBase
 
    public override async ValueTask InitializeAsync()
    {
-      _tool = new GetTypeMembersBatchTool(Workspace);
+      _tool = new GetTypeMembersBatchTool(Workspace, new SymbolLookupService(Workspace));
    }
 
    [Fact]

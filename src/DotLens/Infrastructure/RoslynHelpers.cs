@@ -401,11 +401,12 @@ public static class RoslynHelpers
    /// also the members it inherits from its base classes other than <see cref="object"/>.
    /// </summary>
    /// <remarks>
-   /// An inherited member is left out when it is private, a constructor or destructor, or overridden or hidden by a
-   /// member of a more derived class. An accessor is left out with its property, indexer or event. The declared members
-   /// come first, then each base class's members in turn.
+   /// An inherited member is left out when the type cannot access it, when it is a constructor or destructor, or when a
+   /// member of a more derived class overrides or hides it. An accessor is left out with its property, indexer or event.
+   /// The declared members come first, then each base class's members in turn.
    /// </remarks>
-   public static IEnumerable<ISymbol> GetTypeMembers(INamedTypeSymbol type, bool includeInherited)
+   /// <param name="compilation">A compilation that references the type.</param>
+   public static IEnumerable<ISymbol> GetTypeMembers(INamedTypeSymbol type, Compilation compilation, bool includeInherited)
    {
       var members = type.GetMembers().Where(m => !m.IsImplicitlyDeclared).ToList();
       if (!includeInherited)
@@ -417,9 +418,10 @@ public static class RoslynHelpers
            baseType is not null && baseType.SpecialType != SpecialType.System_Object;
            baseType = baseType.BaseType)
       {
+         // A member the type cannot access hides nothing, so it stays out of the hiding members too.
          var inherited = baseType.GetMembers()
-            .Where(m => m.DeclaredAccessibility != Microsoft.CodeAnalysis.Accessibility.Private
-               && m is not IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor })
+            .Where(m => m is not IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor }
+               && compilation.IsSymbolAccessibleWithin(m, type))
             .ToList();
          var hidden = inherited
             .Where(m => hidingMembers.Any(derived => Hides(derived, m)))
@@ -509,20 +511,50 @@ public static class RoslynHelpers
       type.TypeKind == TypeKind.Dynamic || type.SpecialType == SpecialType.System_Object;
 
    /// <summary>
-   /// Gets a human-readable string for a member's kind.
+   /// Returns the kind that the member tools report for a member, which their member kind filter also matches.
    /// </summary>
    public static string GetMemberKindString(ISymbol member)
    {
       return member switch
       {
-         IMethodSymbol m when m.MethodKind == MethodKind.Ordinary => "Method",
-         IMethodSymbol m when m.MethodKind == MethodKind.Constructor => "Constructor",
+         IMethodSymbol method => method.MethodKind switch
+         {
+            MethodKind.ExplicitInterfaceImplementation => method.ExplicitInterfaceImplementations switch
+            {
+               [{ MethodKind: not MethodKind.ExplicitInterfaceImplementation } implemented, ..] => GetMemberKindString(implemented),
+               _ => "Method",
+            },
+            MethodKind.Ordinary or MethodKind.DelegateInvoke => "Method",
+            MethodKind.Constructor or MethodKind.StaticConstructor => "Constructor",
+            MethodKind.Destructor => "Destructor",
+            MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise => "Accessor",
+            MethodKind.UserDefinedOperator => "Operator",
+            MethodKind.Conversion => "Conversion",
+            _ => throw new InvalidOperationException($"Unexpected method kind of a type member: {method.MethodKind}"),
+         },
          IPropertySymbol => "Property",
          IFieldSymbol => "Field",
          IEventSymbol => "Event",
-         INamedTypeSymbol { IsExtension: true } => "Extension",
+         INamedTypeSymbol nestedType => nestedType.TypeKind.ToString(),
          _ => member.Kind.ToString()
       };
+   }
+
+   /// <summary>
+   /// Returns whether a member has the kind that <paramref name="filter"/> selects, as <see cref="GetMemberKindString"/>
+   /// reports it.
+   /// </summary>
+   public static bool MatchesMemberKind(ISymbol member, MemberKindFilter filter)
+   {
+      var kind = filter switch
+      {
+         MemberKindFilter.Method => "Method",
+         MemberKindFilter.Property => "Property",
+         MemberKindFilter.Field => "Field",
+         MemberKindFilter.Event => "Event",
+         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter, "Unexpected member kind filter"),
+      };
+      return GetMemberKindString(member) == kind;
    }
 
    /// <summary>
@@ -1341,26 +1373,41 @@ public static class RoslynHelpers
          baseTypes.Add(baseClass.ToDisplayString(BaseTypeFormat) + SyntaxText.OneLine(arguments));
       }
 
-      // A record implements IEquatable of itself without naming it.
-      var namesEquatable = baseLists.SelectMany(b => b.Types).Any(t => GetRightmostName(t.Type) is GenericNameSyntax { Identifier.ValueText: "IEquatable" });
+      // The compiler adds the IEquatable of a record itself, so it shows only when a part writes it.
+      var writesOwnEquatable = type.IsRecord && WritesOwnEquatable(type, baseLists);
       baseTypes.AddRange(type.Interfaces
-         .Where(i => namesEquatable || !IsRecordEquatable(type, i))
+         .Where(i => writesOwnEquatable || !IsRecordEquatable(type, i))
          .Select(i => i.ToDisplayString(BaseTypeFormat)));
       return baseTypes;
    }
 
+   /// <summary>
+   /// Returns whether a base list of a partial record's parts writes the IEquatable of the record itself.
+   /// </summary>
+   /// <returns>
+   /// True also when the compilation that declares the record is unavailable, as for a record that a compilation with
+   /// another core library retargets, so the interface then shows whether or not a part wrote it.
+   /// </returns>
+   private static bool WritesOwnEquatable(INamedTypeSymbol type, List<BaseListSyntax> baseLists)
+   {
+      var written = baseLists.SelectMany(b => b.Types).Select(t => t.Type).ToList();
+      if (type.ContainingAssembly is not ISourceAssemblySymbol { Compilation: var compilation }
+         || !written.All(t => compilation.ContainsSyntaxTree(t.SyntaxTree)))
+      {
+         return true;
+      }
+
+      return written.GroupBy(t => t.SyntaxTree).Any(part =>
+      {
+         var model = compilation.GetSemanticModel(part.Key);
+         return part.Any(t => model.GetTypeInfo(t).Type is INamedTypeSymbol bound && IsRecordEquatable(type, bound));
+      });
+   }
+
    private static bool IsRecordEquatable(INamedTypeSymbol type, INamedTypeSymbol implemented) =>
       type.IsRecord
-      && implemented is { Name: "IEquatable", ContainingNamespace.Name: "System", TypeArguments: [var argument] }
+      && implemented is { Name: "IEquatable", ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true }, TypeArguments: [var argument] }
       && SymbolEqualityComparer.Default.Equals(argument, type);
-
-   private static SimpleNameSyntax? GetRightmostName(TypeSyntax type) => type switch
-   {
-      SimpleNameSyntax name => name,
-      QualifiedNameSyntax qualified => qualified.Right,
-      AliasQualifiedNameSyntax aliased => aliased.Name,
-      _ => null,
-   };
 
    /// <summary>
    /// Returns the base list of a type without source: its base class and enum base when C# would write them, and the
@@ -1368,7 +1415,8 @@ public static class RoslynHelpers
    /// </summary>
    /// <remarks>
    /// Metadata lists every interface a type implements, including those that its other interfaces bring in. It lists an
-   /// interface of the base class only when the type implements it again, so that one stays.
+   /// interface of the base class only when the type implements it again, so that one stays. It also lists the IEquatable
+   /// of a record itself, which the compiler adds whether or not the source wrote it, so that one goes.
    /// </remarks>
    private static List<string> GetMetadataBaseTypes(INamedTypeSymbol type)
    {
@@ -1379,7 +1427,9 @@ public static class RoslynHelpers
          baseTypes.Add(baseClass.ToDisplayString(BaseTypeFormat));
 
       var implied = type.Interfaces.SelectMany(i => i.AllInterfaces).ToHashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-      baseTypes.AddRange(type.Interfaces.Where(i => !implied.Contains(i)).Select(i => i.ToDisplayString(BaseTypeFormat)));
+      baseTypes.AddRange(type.Interfaces
+         .Where(i => !implied.Contains(i) && !IsRecordEquatable(type, i))
+         .Select(i => i.ToDisplayString(BaseTypeFormat)));
       return baseTypes;
    }
 

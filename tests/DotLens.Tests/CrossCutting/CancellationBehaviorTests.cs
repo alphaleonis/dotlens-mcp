@@ -32,7 +32,6 @@ public class CancellationBehaviorTests : MockableRoslynServiceTestBase
 
    // Intelligence tools
    private GetTypeOverviewTool _getTypeOverview = null!;
-   private GetTypeMembersBatchTool _getTypeMembersBatch = null!;
 
    public CancellationBehaviorTests()
    {
@@ -48,7 +47,6 @@ public class CancellationBehaviorTests : MockableRoslynServiceTestBase
       _getComplexityMetrics = new GetComplexityMetricsTool(FakeWorkspaceManager, symbolLookup);
       _addUsing = new AddUsingTool(FakeWorkspaceManager);
       _getTypeOverview = new GetTypeOverviewTool(FakeWorkspaceManager, symbolLookup);
-      _getTypeMembersBatch = new GetTypeMembersBatchTool(FakeWorkspaceManager);
    }
 
    #region Cancellation During Type Lookup
@@ -125,33 +123,4 @@ public class CancellationBehaviorTests : MockableRoslynServiceTestBase
    }
 
    #endregion
-
-   #region Cancellation Token Propagation
-
-   [Fact]
-   public async Task GetTypeMembersBatch_PropagatesCancellationToken()
-   {
-      // Arrange
-      using var cts = new CancellationTokenSource();
-      var capturedTokens = new List<CancellationToken>();
-
-      A.CallTo(() => FakeWorkspaceManager.FindTypeWithCompilationAsync(A<string>._, A<bool>._, A<string?>._, A<CancellationToken>._))
-         .Invokes((string _, bool _, string? _, CancellationToken ct) => capturedTokens.Add(ct))
-         .Returns(Task.FromResult<TypeLookupResult?>(null));
-
-      // Act
-      await _getTypeMembersBatch.GetTypeMembersBatchAsync(["Type1", "Type2"], cancellationToken: cts.Token);
-
-      // Assert - verify cancellation token was passed through
-      Assert.Equal(2, capturedTokens.Count);
-      foreach (var token in capturedTokens)
-      {
-         Assert.Equal(cts.Token, token);
-      }
-   }
-
-   #endregion
-
-   // Note: Early cancellation detection for GetTypeMembers is covered by integration tests
-   // since it now uses SymbolLookupService which requires a real Solution object
 }

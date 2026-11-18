@@ -45,7 +45,7 @@ public class GetTypeMembersTool
    [Description("Get all members (methods, properties, fields, events) of a type with optional filtering by kind and inheritance.")]
    public async Task<ToolResult<GetTypeMembersResponse>> GetTypeMembersAsync(
       [Description("Type to get members for")] SymbolLookup target,
-      [Description("Also list members inherited from base classes other than object, static ones included. Private members, constructors, destructors and members that a more derived class overrides or hides are left out.")]
+      [Description("Also list members inherited from base classes other than object, static ones included. Members the type cannot access, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,
       [Description("Filter by member kind")]
       MemberKindFilter? memberKind = null,
@@ -59,12 +59,12 @@ public class GetTypeMembersTool
       var lookupResult = await _symbolLookup.FindSingleAsync<INamedTypeSymbol>(target, cancellationToken: cancellationToken);
       var type = lookupResult.Symbol;
 
-      var allMembers = RoslynHelpers.GetTypeMembers(type, includeInherited).ToList();
+      var allMembers = RoslynHelpers.GetTypeMembers(type, lookupResult.Compilation, includeInherited).ToList();
 
       // Filter by member kind
       if (memberKind.HasValue)
       {
-         allMembers = allMembers.Where(m => MatchesMemberKind(m, memberKind.Value)).ToList();
+         allMembers = allMembers.Where(m => RoslynHelpers.MatchesMemberKind(m, memberKind.Value)).ToList();
       }
 
       var uniqueMembers = allMembers.Take(maxResults).ToList();
@@ -95,17 +95,5 @@ public class GetTypeMembersTool
          totalCount: totalCount,
          returnedCount: uniqueMembers.Count,
          verbosity: verbosity);
-   }
-
-   private static bool MatchesMemberKind(ISymbol member, MemberKindFilter kind)
-   {
-      return kind switch
-      {
-         MemberKindFilter.Method => member is IMethodSymbol ms && ms.MethodKind == MethodKind.Ordinary,
-         MemberKindFilter.Property => member is IPropertySymbol,
-         MemberKindFilter.Field => member is IFieldSymbol,
-         MemberKindFilter.Event => member is IEventSymbol,
-         _ => true
-      };
    }
 }

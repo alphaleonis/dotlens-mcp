@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="MemberListsTestProject.csproj" />
+  <Project Path="../MemberListsBaseLibrary/MemberListsBaseLibrary.csproj" />
+  <Project Path="../MemberListsFriendLibrary/MemberListsFriendLibrary.csproj" />
+</Solution>

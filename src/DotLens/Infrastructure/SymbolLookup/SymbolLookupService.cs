@@ -436,6 +436,7 @@ public class SymbolLookupService
       return new SourceSymbolResult<TSymbol>
       {
          Symbol = symbol,
+         Compilation = semanticModel.Compilation,
          Document = document,
          Syntax = await GetDeclaringSyntaxAsync(symbol, cancellationToken)
       };
@@ -493,6 +494,7 @@ public class SymbolLookupService
       var result = new SourceSymbolResult<TSymbol>
       {
          Symbol = typedSymbol,
+         Compilation = semanticModel.Compilation,
          Document = document,
          Syntax = await GetDeclaringSyntaxAsync(symbol, cancellationToken)
       };
@@ -585,7 +587,7 @@ public class SymbolLookupService
             if (!seen.Add(SymbolIdentity.Of(typedSymbol, projectAssemblies)))
                continue;
 
-            results.Add(await CreateResultAsync(typedSymbol, solution, cancellationToken));
+            results.Add(await CreateResultAsync(typedSymbol, compilation, solution, cancellationToken));
          }
       }
 
@@ -916,6 +918,7 @@ public class SymbolLookupService
 
    private static async Task<SymbolLookupResult<TSymbol>> CreateResultAsync<TSymbol>(
       TSymbol symbol,
+      Compilation compilation,
       Solution solution,
       CancellationToken cancellationToken) where TSymbol : ISymbol
    {
@@ -928,6 +931,7 @@ public class SymbolLookupService
          return new SourceSymbolResult<TSymbol>
          {
             Symbol = symbol,
+            Compilation = compilation,
             Document = document,
             Syntax = syntaxRef is null ? null : await syntaxRef.GetSyntaxAsync(cancellationToken)
          };
@@ -938,6 +942,7 @@ public class SymbolLookupService
       return new MetadataSymbolResult<TSymbol>
       {
          Symbol = symbol,
+         Compilation = compilation,
          AssemblyName = assemblyName
       };
    }

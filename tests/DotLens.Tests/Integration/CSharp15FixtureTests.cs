@@ -2618,7 +2618,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    public async Task TypeMembers_ExtensionBlockName_ListsBlocksWithTheSameHeader()
    {
       var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
-      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
       var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "SpoolExtensions" }, cancellationToken: CT);
       var batchResult = await batch.GetTypeMembersBatchAsync(["SpoolExtensions"], cancellationToken: CT);
@@ -2633,7 +2633,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    public async Task TypeMembers_Overloads_ListsEachOverload()
    {
       var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
-      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
       var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "Box" }, cancellationToken: CT);
       var batchResult = await batch.GetTypeMembersBatchAsync(["Box"], cancellationToken: CT);
@@ -2651,7 +2651,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    public async Task TypeMembers_IncludeInherited_OmitsOverriddenAndHiddenBaseMembers()
    {
       var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
-      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
       var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "Rhombus" }, includeInherited: true, cancellationToken: CT);
       var batchResult = await batch.GetTypeMembersBatchAsync(["Rhombus"], includeInherited: true, cancellationToken: CT);
@@ -2686,9 +2686,9 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             ("CSharp15TestProject.Barometer", "Turn", "Method", 66),
             ("CSharp15TestProject.Barometer", "Push", "Method", 68),
             ("CSharp15TestProject.Barometer", "Level", "Property", 70),
-            ("CSharp15TestProject.Barometer", "get_Level", "Method", 70),
+            ("CSharp15TestProject.Barometer", "get_Level", "Accessor", 70),
             ("CSharp15TestProject.Barometer", "this[]", "Property", 72),
-            ("CSharp15TestProject.Barometer", "get_Item", "Method", 72),
+            ("CSharp15TestProject.Barometer", "get_Item", "Accessor", 72),
             ("CSharp15TestProject.Barometer", "Mode", "Method", 74),
             ("CSharp15TestProject.Barometer", "Store", "Method", 76),
             ("CSharp15TestProject.Barometer", "Pair", "Method", 78),
@@ -2696,8 +2696,8 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
             ("CSharp15TestProject.Gauge", "Max", "Field", 35),
             ("CSharp15TestProject.Gauge", "Count", "Field", 37),
             ("CSharp15TestProject.Gauge", "Reset", "Method", 39),
-            ("CSharp15TestProject.Gauge", "Dial", "NamedType", 41),
-            ("CSharp15TestProject.Gauge", "Tools", "NamedType", 43),
+            ("CSharp15TestProject.Gauge", "Dial", "Class", 41),
+            ("CSharp15TestProject.Gauge", "Tools", "Class", 43),
             ("CSharp15TestProject.Gauge", "Turn", "Method", 45),
             ("CSharp15TestProject.Gauge", "Push", "Method", 47),
             ("CSharp15TestProject.Gauge", "Shift", "Method", 61),
@@ -2734,7 +2734,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    private async Task<List<(string? ContainingType, string Name, string Kind, int? Line)>> InheritedMembersOfAsync(string typeName)
    {
       var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
-      var batch = new GetTypeMembersBatchTool(_fixture.Workspace);
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
       var result = await tool.GetTypeMembersAsync(
          new LookupByName { Name = typeName }, includeInherited: true, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
@@ -2750,7 +2750,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    [Fact]
    public async Task TypeMembersBatch_ExtensionBlockName_ListsBlockByNameAndKind()
    {
-      var tool = new GetTypeMembersBatchTool(_fixture.Workspace);
+      var tool = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
 
       var result = await tool.GetTypeMembersBatchAsync(["GridExtensions"], cancellationToken: CT);
 

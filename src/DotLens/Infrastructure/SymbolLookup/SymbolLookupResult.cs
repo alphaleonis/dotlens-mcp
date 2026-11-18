@@ -13,6 +13,11 @@ public abstract record SymbolLookupResult<TSymbol> where TSymbol : ISymbol
    /// The resolved symbol.
    /// </summary>
    public required TSymbol Symbol { get; init; }
+
+   /// <summary>
+   /// The compilation the lookup found the symbol in.
+   /// </summary>
+   public required Compilation Compilation { get; init; }
 }
 
 /// <summary>
