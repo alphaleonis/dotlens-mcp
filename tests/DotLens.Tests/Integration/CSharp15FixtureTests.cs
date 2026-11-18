@@ -1,5 +1,6 @@
 using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
+using DotLens.Tests.Helpers;
 using DotLens.Tools.Analysis;
 using DotLens.Tools.Intelligence;
 using DotLens.Tools.Navigation;
@@ -1054,7 +1055,6 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
    [Theory]
    [InlineData("Box.Get", new[] { "CSharp15TestProject.Box<T>.Get()", "CSharp15TestProject.Box<T>.Get(int)" })]
-   [InlineData("Mold.Make", new[] { "CSharp15TestProject.Mold.Make(int) at AmbiguousMembers.cs:55:22", "CSharp15TestProject.Mold.Make<T>(int) at AmbiguousMembers.cs:57:21" })]
    public async Task LookupByName_AmbiguousGenericMember_ErrorListsEachCandidate(string name, string[] candidates)
    {
       await AssertAmbiguousAsync(name, candidates);
@@ -1070,10 +1070,55 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       await AssertSelectsAsync(new LookupByName { Name = name, ParameterTypes = parameterTypes }, expected);
    }
 
+   /// <summary>
+   /// Each name also matches a candidate with type parameters where the name lists none.
+   /// </summary>
+   [Theory]
+   [InlineData("System.Threading.Tasks.Task", null, "System.Threading.Tasks.Task")]
+   [InlineData("System.Action", null, "System.Action")]
+   [InlineData("System.Nullable", null, "System.Nullable")]
+   [InlineData("System.Threading.Tasks.Task.FromException", new[] { "System.Exception" }, "System.Threading.Tasks.Task.FromException(System.Exception)")]
+   [InlineData("Mold.Make", null, "CSharp15TestProject.Mold.Make(int)")]
+   [InlineData("Mold.Make", new[] { "int" }, "CSharp15TestProject.Mold.Make(int)")]
+   [InlineData("CSharp15TestProject.Mold.Make", new[] { "int" }, "CSharp15TestProject.Mold.Make(int)")]
+   [InlineData("Stamp.ToString", null, "CSharp15TestProject.Stamp.ToString()")]
+   [InlineData("Stamp.Deconstruct", null, "CSharp15TestProject.Stamp.Deconstruct(out int)")]
+   [InlineData("Stamp.Equals", new[] { "object" }, "CSharp15TestProject.Stamp.Equals(object?)")]
+   [InlineData("Stamp.Value", null, "CSharp15TestProject.Stamp.Value")]
+   [InlineData("Stamp.get_Value", null, "CSharp15TestProject.Stamp.Value.get")]
+   [InlineData("CSharp15TestProject.Stamp", null, "CSharp15TestProject.Stamp")]
+   [InlineData("System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter", null, "System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter")]
+   public async Task LookupByName_TypeParameterCountZero_NameWithoutTypeParametersSelectsTheNonGenericCandidate(string name, string[]? parameterTypes, string expected)
+   {
+      await AssertSelectsAsync(new LookupByName { Name = name, ParameterTypes = parameterTypes }, expected);
+   }
+
+   [Theory]
+   [InlineData("System.Threading.Tasks.Task`0", null, "System.Threading.Tasks.Task")]
+   [InlineData("System.Threading.Tasks.Task<TResult>", null, "System.Threading.Tasks.Task<TResult>")]
+   [InlineData("System.Threading.Tasks.Task`1", null, "System.Threading.Tasks.Task<TResult>")]
+   [InlineData("System.Action`2", null, "System.Action<T1, T2>")]
+   [InlineData("System.Threading.Tasks.Task.FromException<TResult>", new[] { "System.Exception" }, "System.Threading.Tasks.Task.FromException<TResult>(System.Exception)")]
+   [InlineData("System.Threading.Tasks.Task.FromException`1", new[] { "System.Exception" }, "System.Threading.Tasks.Task.FromException<TResult>(System.Exception)")]
+   [InlineData("Mold.Make`1", new[] { "int" }, "CSharp15TestProject.Mold.Make<T>(int)")]
+   [InlineData("Stamp<T>.ToString", null, "CSharp15TestProject.Stamp<T>.ToString()")]
+   [InlineData("Stamp`1.Deconstruct", null, "CSharp15TestProject.Stamp<T>.Deconstruct(out int)")]
+   [InlineData("Stamp<T>.Value", null, "CSharp15TestProject.Stamp<T>.Value")]
+   [InlineData("CSharp15TestProject.Stamp`1", null, "CSharp15TestProject.Stamp<T>")]
+   [InlineData("System.Runtime.CompilerServices.ConfiguredTaskAwaitable<TResult>.ConfiguredTaskAwaiter", null, "System.Runtime.CompilerServices.ConfiguredTaskAwaitable<TResult>.ConfiguredTaskAwaiter")]
+   public async Task LookupByName_TypeParameterCountGiven_SelectsThatCount(string name, string[]? parameterTypes, string expected)
+   {
+      await AssertSelectsAsync(new LookupByName { Name = name, ParameterTypes = parameterTypes }, expected);
+   }
+
    [Theory]
    [InlineData("Box<T, U>.Get")]
    [InlineData("CSharp15TestProject.Box<T, U>.Get")]
    [InlineData("Mold.Make<T, U>")]
+   [InlineData("Mold.Make`2")]
+   [InlineData("Box`0.Get")]
+   [InlineData("System.Threading.Tasks.Task`3")]
+   [InlineData("Mold.Make`x")]
    public async Task LookupByName_TypeParameterCountDiffers_FindsNothing(string name)
    {
       var service = new SymbolLookupService(_fixture.Workspace);
@@ -1114,150 +1159,71 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
 
    /// <summary>
    /// Each name matches several symbols, and the error lists them. Each listed candidate with its parameter list
-   /// moved to parameterTypes, its return type to returnType, or its location to position mode, as
-   /// <see cref="SymbolLookupService.AmbiguityHint"/> says, must find that candidate. A listed name without a location
-   /// also finds the candidates that differ from it only in type parameters, as the hint warns.
+   /// moved to parameterTypes, its return type to returnType, its location to position mode, or its project to project,
+   /// as <see cref="SymbolLookupService.AmbiguityHint"/> says, must find that candidate alone.
    /// </summary>
    [Theory]
-   [InlineData("SpoolExtensions.this[]")]
-   [InlineData("SpoolExtensions.extension(Tape).this[]")]
-   [InlineData("Catalog.this[]")]
-   [InlineData("CSharp15TestProject.Catalog.get_Item")]
-   [InlineData("Catalog.get_Item")]
-   [InlineData("get_Item")]
-   [InlineData("add_Rang")]
-   [InlineData("SpoolExtensions.get_Item")]
-   [InlineData("SpoolExtensions.extension(Tape).get_Item")]
-   [InlineData("SpoolExtensions.Peek")]
-   [InlineData("CSharp15TestProject.SpoolExtensions.Peek")]
-   [InlineData("SpoolExtensions.Length")]
-   [InlineData("Box.Get")]
-   [InlineData("Mold.Make")]
-   [InlineData("CSharp15TestProject.Money.op_Implicit")]
-   [InlineData("CSharp15TestProject.Money.op_Explicit")]
-   [InlineData("CSharp15TestProject.Money.op_LessThan")]
-   [InlineData("System.Decimal.op_Implicit")]
-   [InlineData("System.Decimal.op_Explicit")]
-   [InlineData("System.String.Join")]
-   [InlineData("Stamp.Value")]
-   [InlineData("Stamp.Deconstruct")]
-   public async Task LookupByName_AmbiguousCandidates_EachListedCandidateFindsItself(string name)
+   [InlineData("SpoolExtensions.this[]", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).this[int]", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).this[int]", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).this[string]" })]
+   [InlineData("SpoolExtensions.extension(Tape).this[]", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).this[int]", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).this[string]" })]
+   [InlineData("Catalog.this[]", new[] { "CSharp15TestProject.Catalog.this[int]", "CSharp15TestProject.Catalog.this[string]" })]
+   [InlineData("CSharp15TestProject.Catalog.get_Item", new[] { "CSharp15TestProject.Catalog.get_Item(int)", "CSharp15TestProject.Catalog.get_Item(string)" })]
+   [InlineData("Catalog.get_Item", new[] { "CSharp15TestProject.Catalog.get_Item(int)", "CSharp15TestProject.Catalog.get_Item(string)" })]
+   [InlineData("get_Item", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(string)", "CSharp15TestProject.Catalog.get_Item(int)", "CSharp15TestProject.Catalog.get_Item(string)" })]
+   [InlineData("add_Rang", new[] { "CSharp15TestProject.Alarm.add_Rang(System.Action)", "CSharp15TestProject.Siren.add_Rang(System.Action)" })]
+   [InlineData("SpoolExtensions.get_Item", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(string)" })]
+   [InlineData("SpoolExtensions.extension(Tape).get_Item", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(int)", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).get_Item(string)" })]
+   [InlineData("SpoolExtensions.Peek", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).Peek()", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Peek()" })]
+   [InlineData("CSharp15TestProject.SpoolExtensions.Peek", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).Peek()", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Peek()" })]
+   [InlineData("SpoolExtensions.Length", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape).Length", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Reel).Length" })]
+   [InlineData("Box.Get", new[] { "CSharp15TestProject.Box<T>.Get()", "CSharp15TestProject.Box<T>.Get(int)" })]
+   [InlineData("CSharp15TestProject.Money.op_Implicit", new[] { "CSharp15TestProject.Money.op_Implicit(int) returns CSharp15TestProject.Money", "CSharp15TestProject.Money.op_Implicit(long) returns CSharp15TestProject.Money" })]
+   [InlineData("CSharp15TestProject.Money.op_Explicit", new[] { "CSharp15TestProject.Money.op_Explicit(CSharp15TestProject.Money) returns int", "CSharp15TestProject.Money.op_Explicit(CSharp15TestProject.Money) returns long" })]
+   [InlineData("CSharp15TestProject.Money.op_LessThan", new[] { "CSharp15TestProject.Money.op_LessThan(CSharp15TestProject.Money, CSharp15TestProject.Money)", "CSharp15TestProject.Money.op_LessThan(CSharp15TestProject.Money, int)" })]
+   [InlineData("System.Decimal.op_Implicit", new[] { "System.Decimal.op_Implicit(byte) returns decimal", "System.Decimal.op_Implicit(char) returns decimal", "System.Decimal.op_Implicit(short) returns decimal", "System.Decimal.op_Implicit(int) returns decimal", "System.Decimal.op_Implicit(long) returns decimal" })]
+   [InlineData("System.Decimal.op_Explicit", new[] { "System.Decimal.op_Explicit(decimal) returns byte", "System.Decimal.op_Explicit(decimal) returns char", "System.Decimal.op_Explicit(decimal) returns double", "System.Decimal.op_Explicit(decimal) returns short", "System.Decimal.op_Explicit(decimal) returns int" })]
+   [InlineData("System.String.Join", new[] { "System.String.Join(char, params object[])", "System.String.Join(char, params System.ReadOnlySpan<object>)", "System.String.Join(char, params string[])", "System.String.Join(char, params System.ReadOnlySpan<string>)", "System.String.Join(char, string[], int, int)" })]
+   [InlineData("System.Func", new[] { "System.Func<TResult>", "System.Func<T, TResult>", "System.Func<T1, T2, TResult>", "System.Func<T1, T2, T3, TResult>", "System.Func<T1, T2, T3, T4, TResult>" })]
+   [InlineData("System.Tuple.Create", new[] { "System.Tuple.Create<T1>(T1)", "System.Tuple.Create<T1, T2>(T1, T2)", "System.Tuple.Create<T1, T2, T3>(T1, T2, T3)", "System.Tuple.Create<T1, T2, T3, T4>(T1, T2, T3, T4)", "System.Tuple.Create<T1, T2, T3, T4, T5>(T1, T2, T3, T4, T5)" })]
+   [InlineData("System.Array.IndexOf", new[] { "System.Array.IndexOf(System.Array, object)", "System.Array.IndexOf(System.Array, object, int)", "System.Array.IndexOf(System.Array, object, int, int)", "System.Array.IndexOf<T>(T[], T)", "System.Array.IndexOf<T>(T[], T, int)" })]
+   [InlineData("Stamp.Equals", new[] { "CSharp15TestProject.Stamp.Equals(object)", "CSharp15TestProject.Stamp.Equals(CSharp15TestProject.Stamp)", "CSharp15TestProject.Stamp<T>.Equals(CSharp15TestProject.Stamp<T>)" })]
+   [InlineData("Stamp<T>.Equals", new[] { "CSharp15TestProject.Stamp<T>.Equals(object)", "CSharp15TestProject.Stamp<T>.Equals(CSharp15TestProject.Stamp<T>)" })]
+   [InlineData("extension(Tape)", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:15:4", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:33:4" })]
+   [InlineData("SpoolExtensions.extension(Tape)", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:15:4", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:33:4" })]
+   [InlineData("CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape)", new[] { "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:15:4", "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:33:4" })]
+   public async Task LookupByName_AmbiguousCandidates_EachListedCandidateFindsItself(string name, string[] expected)
    {
-      var service = new SymbolLookupService(_fixture.Workspace);
-      var lookup = new LookupByName { Name = name };
-      var matches = await service.FindAsync<ISymbol>(lookup, cancellationToken: CT);
+      await AmbiguityRoundTrip.AssertEachListedCandidateFindsItselfAsync(
+         new SymbolLookupService(_fixture.Workspace), new LookupByName { Name = name }, expected, CT);
+   }
 
-      var ex = await Assert.ThrowsAsync<ToolException>(() => service.FindSingleAsync<ISymbol>(lookup, cancellationToken: CT));
+   private const string GridBlock = "CSharp15TestProject.GridExtensions.extension(CSharp15TestProject.Grid)";
 
-      var listed = ex.Message[(ex.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]
-         .Split("; ")
-         .Where(candidate => !candidate.StartsWith("and ", StringComparison.Ordinal))
-         .ToList();
-      Assert.Equal(Math.Min(matches.Count, 5), listed.Count);
-      var lookups = listed.Select(ParseListedCandidate).ToList();
-      for (var i = 0; i < listed.Count; i++)
-      {
-         var expected = lookups[i] is LookupByName byName
-            ? Enumerable.Range(0, listed.Count)
-               .Where(j => lookups[j] is LookupByName other && NameAlsoFinds(byName, other))
-               .Select(j => matches[j].Symbol)
-               .ToList()
-            : [matches[i].Symbol];
-
-         var found = await service.FindAsync<ISymbol>(lookups[i], cancellationToken: CT);
-
-         Assert.Equal(expected, found.Select(r => r.Symbol), SymbolEqualityComparer.Default);
-      }
+   [Theory]
+   [InlineData("GridExtensions.extension(Grid)", GridBlock)]
+   [InlineData("GridExtensions.extension(CSharp15TestProject.Grid)", GridBlock)]
+   [InlineData("extension(Grid)", GridBlock)]
+   [InlineData("extension(CSharp15TestProject.Grid)", GridBlock)]
+   [InlineData("CSharp15TestProject.GridExtensions.extension(Grid)", GridBlock)]
+   [InlineData("MeterExtensions.extension<T>(ref T)", "CSharp15TestProject.MeterExtensions.extension<T>(ref T)")]
+   [InlineData("extension(scoped ref Meter)", "CSharp15TestProject.MeterExtensions.extension(scoped ref CSharp15TestProject.Meter)")]
+   public async Task LookupByName_ExtensionBlockShortPath_FindsTheBlock(string name, string expected)
+   {
+      await AssertSelectsAsync(new LookupByName { Name = name }, expected);
    }
 
    /// <summary>
-   /// Returns whether a listed name also finds another candidate: one with the same name, or, when the listed name has
-   /// no type-parameter lists, one whose name only adds them.
+   /// SpoolExtensions declares two blocks for Tape, which only their locations tell apart.
    /// </summary>
-   private static bool NameAlsoFinds(LookupByName listed, LookupByName other) =>
-      (listed.Name == other.Name || (listed.Name == RemoveTypeParameters(listed.Name) && listed.Name == RemoveTypeParameters(other.Name)))
-      && (listed.ParameterTypes ?? []).SequenceEqual(other.ParameterTypes ?? [])
-      && listed.ParameterTypes is null == other.ParameterTypes is null
-      && listed.ReturnType == other.ReturnType;
-
-   private static string RemoveTypeParameters(string name) =>
-      System.Text.RegularExpressions.Regex.Replace(name, "<[^<>()]*>(?=\\.|$)", "");
-
-   private static SymbolLookup ParseListedCandidate(string candidate)
+   [Theory]
+   [InlineData("extension(Tape)")]
+   [InlineData("SpoolExtensions.extension(Tape)")]
+   public async Task LookupByName_ExtensionBlockShortPath_AmbiguousHeaderListsEachBlock(string name)
    {
-      var at = candidate.IndexOf(" at ", StringComparison.Ordinal);
-      if (at >= 0)
-      {
-         var position = candidate[(at + 4)..].Split(':');
-         return new LookupByPosition { FilePath = position[0], Line = int.Parse(position[1]), Column = int.Parse(position[2]) };
-      }
-
-      string? returnType = null;
-      var returns = candidate.IndexOf(" returns ", StringComparison.Ordinal);
-      if (returns >= 0)
-      {
-         returnType = candidate[(returns + 9)..];
-         candidate = candidate[..returns];
-      }
-
-      var (open, close) = candidate.EndsWith(')') ? ('(', ')') : candidate.EndsWith(']') ? ('[', ']') : ('\0', '\0');
-      if (open == '\0')
-         return new LookupByName { Name = candidate };
-
-      var start = FindOpeningBracket(candidate, open, close);
-      var name = open == '[' ? candidate[..(start + 1)] + "]" : candidate[..start];
-      return new LookupByName { Name = name, ParameterTypes = SplitTopLevel(candidate[(start + 1)..^1]), ReturnType = returnType };
-   }
-
-   private static int FindOpeningBracket(string text, char open, char close)
-   {
-      var depth = 0;
-      for (var i = text.Length - 1; i >= 0; i--)
-      {
-         if (text[i] == close)
-            depth++;
-         else if (text[i] == open && --depth == 0)
-            return i;
-      }
-
-      throw new InvalidOperationException($"No opening '{open}' in {text}");
-   }
-
-   private static string[] SplitTopLevel(string parameters)
-   {
-      var parts = new List<string>();
-      var depth = 0;
-      var start = 0;
-      for (var i = 0; i < parameters.Length; i++)
-      {
-         switch (parameters[i])
-         {
-            case '<' or '(' or '[':
-               depth++;
-               break;
-            case '>' or ')' or ']':
-               depth--;
-               break;
-            case ',' when depth == 0:
-               parts.Add(parameters[start..i].Trim());
-               start = i + 1;
-               break;
-         }
-      }
-
-      if (parameters.Trim().Length > 0)
-         parts.Add(parameters[start..].Trim());
-      return parts.ToArray();
-   }
-
-   /// <summary>
-   /// A record's positional property is declared by its primary-constructor parameter, where a position lookup finds
-   /// the parameter instead.
-   /// </summary>
-   [Fact]
-   public async Task LookupByName_AmbiguousRecordPositionalProperty_ListsNoLocation()
-   {
-      await AssertAmbiguousAsync("Stamp.Value", ["CSharp15TestProject.Stamp.Value", "CSharp15TestProject.Stamp<T>.Value"]);
+      await AssertAmbiguousAsync(name,
+      [
+         "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:15:4",
+         "CSharp15TestProject.SpoolExtensions.extension(CSharp15TestProject.Tape) at AmbiguousMembers.cs:33:4",
+      ]);
    }
 
    /// <summary>

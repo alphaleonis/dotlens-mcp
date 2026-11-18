@@ -1,5 +1,6 @@
 using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
+using DotLens.Tests.Helpers;
 using Microsoft.CodeAnalysis;
 using Xunit;
 
@@ -503,5 +504,71 @@ public class SymbolLookupDisambiguationTests : TestFixtureTestBase
       var results = await _service.FindAsync<IMethodSymbol>(lookup, cancellationToken: CT);
 
       Assert.Empty(results);
+   }
+
+   // ===========================================
+   // Type-parameter counts and same full names
+   // ===========================================
+
+   /// <summary>
+   /// Each name matches non-generic and generic symbols that differ in more than their type-parameter counts.
+   /// </summary>
+   [Theory]
+   [InlineData("IRepository", new[] { "CoreTestProject.Types.IRepository<T>", "InheritanceTestProject.IRepository" })]
+   [InlineData("InMemoryRepository", new[] { "CoreTestProject.Types.InMemoryRepository<T>", "InheritanceTestProject.InMemoryRepository" })]
+   [InlineData("Convert", new[] { "CoreTestProject.Types.OverloadedService.Convert(int)", "CoreTestProject.Types.OverloadedService.Convert(string)", "CoreTestProject.Types.GenericMethods.Convert<TInput, TOutput>(TInput, System.Func<TInput, TOutput>)" })]
+   public async Task FindAsync_NameWithoutTypeParameters_KeepsGenericSymbolsThatDifferOtherwise(string name, string[] expected)
+   {
+      var results = await _service.FindAsync<ISymbol>(new LookupByName { Name = name }, cancellationToken: CT);
+
+      Assert.Equivalent(expected, results.Select(r => r.Symbol.ToDisplayString()), strict: true);
+   }
+
+   /// <summary>
+   /// CoreTestProject and ConflictingTypesProject each declare CoreTestProject.Types.AmbiguousTestClass.
+   /// </summary>
+   [Theory]
+   [InlineData("AmbiguousTestClass")]
+   [InlineData("CoreTestProject.Types.AmbiguousTestClass")]
+   public async Task FindAsync_SameFullNameInTwoProjects_FindsBoth(string name)
+   {
+      var lookup = new LookupByName { Name = name };
+
+      var results = await _service.FindAsync<ISymbol>(lookup, cancellationToken: CT);
+      var ex = await Assert.ThrowsAsync<ToolException>(() => _service.FindSingleAsync<ISymbol>(lookup, cancellationToken: CT));
+
+      Assert.Equivalent(
+         new[] { ("CoreTestProject", "CoreTestProject.Types.AmbiguousTestClass"), ("ConflictingTypesProject", "CoreTestProject.Types.AmbiguousTestClass") },
+         results.Select(r => (r.Symbol.ContainingAssembly.Name, r.Symbol.ToDisplayString())),
+         strict: true);
+      Assert.Equal(ErrorCodes.AmbiguousSymbol, ex.Code);
+      Assert.Equal(
+         $"Multiple symbols found (2): CoreTestProject.Types.AmbiguousTestClass at {Path.Combine("CoreTestProject", "Types", "Classes.cs")}:96:14; CoreTestProject.Types.AmbiguousTestClass at {Path.Combine("ConflictingTypesProject", "ConflictingTypes.cs")}:14:14",
+         ex.Message);
+   }
+
+   [Theory]
+   [InlineData("IRepository", new[] { "InheritanceTestProject.IRepository", "CoreTestProject.Types.IRepository<T>" })]
+   [InlineData("InMemoryRepository", new[] { "InheritanceTestProject.InMemoryRepository", "CoreTestProject.Types.InMemoryRepository<T>" })]
+   [InlineData("Convert", new[] { "CoreTestProject.Types.GenericMethods.Convert<TInput, TOutput>(TInput, System.Func<TInput, TOutput>)", "CoreTestProject.Types.OverloadedService.Convert(int)", "CoreTestProject.Types.OverloadedService.Convert(string)" })]
+   [InlineData("AmbiguousTestClass", new[] { "CoreTestProject.Types.AmbiguousTestClass at CoreTestProject/Types/Classes.cs:96:14", "CoreTestProject.Types.AmbiguousTestClass at ConflictingTypesProject/ConflictingTypes.cs:14:14" })]
+   [InlineData("CoreTestProject.Types.AmbiguousTestClass", new[] { "CoreTestProject.Types.AmbiguousTestClass at CoreTestProject/Types/Classes.cs:96:14", "CoreTestProject.Types.AmbiguousTestClass at ConflictingTypesProject/ConflictingTypes.cs:14:14" })]
+   public async Task FindSingleAsync_AmbiguousCandidates_EachListedCandidateFindsItself(string name, string[] expected)
+   {
+      await AmbiguityRoundTrip.AssertEachListedCandidateFindsItselfAsync(_service, new LookupByName { Name = name }, expected, CT);
+   }
+
+   /// <summary>
+   /// CoreTestProject and ConflictingTypesProject each declare the namespace CoreTestProject.Types.
+   /// </summary>
+   [Theory]
+   [InlineData("CoreTestProject.Types", "CoreTestProject.Types")]
+   [InlineData("Types", "CoreTestProject.Types")]
+   [InlineData("CoreTestProject", "CoreTestProject")]
+   public async Task FindSingleAsync_NamespaceInTwoProjects_FindsItOnce(string name, string expected)
+   {
+      var result = await _service.FindSingleAsync<INamespaceSymbol>(new LookupByName { Name = name }, cancellationToken: CT);
+
+      Assert.Equal(expected, result.Symbol.ToDisplayString());
    }
 }

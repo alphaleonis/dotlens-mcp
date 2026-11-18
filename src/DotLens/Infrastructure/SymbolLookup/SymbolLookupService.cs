@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -14,7 +15,7 @@ public class SymbolLookupService
    /// The recovery hint of the error for a lookup that matches more than one symbol.
    /// </summary>
    public const string AmbiguityHint =
-      "Look up one candidate by the name listed, without its parameter list (an indexer's name is this[]). Pass the listed parameter types as parameterTypes and a listed return type as returnType. Where a location is listed, use position mode with it instead. A name without type parameters also matches the candidates that differ from it only in type parameters";
+      "Look up one candidate by the name listed, without its parameter list (an indexer's name is this[]). Pass the listed parameter types as parameterTypes and a listed return type as returnType. Where a location is listed, use position mode with it instead. Where a project is listed, pass it as project";
 
    private readonly IReadOnlyWorkspace _workspaceManager;
 
@@ -64,7 +65,7 @@ public class SymbolLookupService
       Func<TSymbol, bool>? filter = null,
       CancellationToken cancellationToken = default) where TSymbol : ISymbol
    {
-      _workspaceManager.EnsureSolutionLoaded();
+      var solution = _workspaceManager.EnsureSolutionLoaded();
 
       var results = lookup switch
       {
@@ -80,8 +81,180 @@ public class SymbolLookupService
          results = results.Where(r => filter(r.Symbol)).ToList();
       }
 
+      if (lookup is LookupByName byName)
+      {
+         results = PreferNonGeneric(results, SplitQualifiedName(byName.Name), GetProjectAssemblies(solution));
+      }
+
       return results;
    }
+
+   /// <summary>
+   /// The identity of a symbol across the compilations of the solution's projects, which hold different instances of
+   /// one symbol. A name lookup lists each identity once, and the name lookup for a listed candidate finds its identity.
+   /// </summary>
+   /// <param name="Display">The full name of the symbol with its parameter types.</param>
+   /// <param name="Declaration">
+   /// The file path, in upper case, and the offset of the first declaration of a symbol in source, or null for any other
+   /// symbol.
+   /// </param>
+   /// <param name="ProjectAssembly">
+   /// The assembly name of the solution project that holds a symbol not in source, or null for a symbol in source, a
+   /// namespace, or a symbol of any other assembly.
+   /// </param>
+   private readonly record struct SymbolIdentity(string Display, string? Declaration, string? ProjectAssembly)
+   {
+      /// <remarks>
+      /// Every project that compiles a source file declares the same symbols, whatever its assembly name, and two
+      /// declarations are two symbols. A symbol of an assembly outside the solution is known by its name alone, because
+      /// the framework assemblies of a project's builds for several frameworks differ in version. A namespace spans
+      /// projects.
+      /// </remarks>
+      public static SymbolIdentity Of(ISymbol symbol, HashSet<string> projectAssemblies)
+      {
+         var display = symbol.ToDisplayString(DeduplicationFormat);
+         if (symbol is INamespaceSymbol)
+            return new SymbolIdentity(display, null, null);
+
+         var declaration = GetFirstDeclaration(symbol);
+         return declaration is not null
+            ? new SymbolIdentity(display, declaration, null)
+            : new SymbolIdentity(display, null, GetProjectAssembly(symbol, projectAssemblies));
+      }
+   }
+
+   /// <returns>
+   /// The file path, in upper case, and the offset of the symbol's declaration that comes first by path and then by
+   /// offset, or null for a symbol not in source.
+   /// </returns>
+   internal static string? GetFirstDeclaration(ISymbol symbol) =>
+      symbol.Locations
+         .Where(l => l.IsInSource && !string.IsNullOrEmpty(l.SourceTree?.FilePath))
+         .Select(l => (Path: l.SourceTree?.FilePath.ToUpperInvariant() ?? "", l.SourceSpan.Start))
+         .OrderBy(d => d.Path, StringComparer.Ordinal)
+         .ThenBy(d => d.Start)
+         .Select(d => $"{d.Path}:{d.Start}")
+         .FirstOrDefault();
+
+   /// <summary>
+   /// Returns the assembly names of the solution's projects, in any letter case as assembly names compare.
+   /// </summary>
+   private static HashSet<string> GetProjectAssemblies(Solution solution) =>
+      solution.Projects.Select(p => p.AssemblyName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+   /// <returns>The assembly name of the solution project that holds the symbol, or null for any other symbol.</returns>
+   private static string? GetProjectAssembly(ISymbol symbol, HashSet<string> projectAssemblies) =>
+      symbol is not INamespaceSymbol
+      && symbol.ContainingAssembly is { } assembly
+      && projectAssemblies.TryGetValue(assembly.Name, out var name)
+         ? name
+         : null;
+
+   /// <summary>
+   /// Removes each result from a project's assembly reference when the same project's source declares the same symbol.
+   /// </summary>
+   private static List<SymbolLookupResult<TSymbol>> PreferSourceOfProjectAssemblies<TSymbol>(
+      List<SymbolLookupResult<TSymbol>> results,
+      HashSet<string> projectAssemblies) where TSymbol : ISymbol
+   {
+      var declared = results
+         .OfType<SourceSymbolResult<TSymbol>>()
+         .Select(r => (GetProjectAssembly(r.Symbol, projectAssemblies), r.Symbol.ToDisplayString(DeduplicationFormat)))
+         .ToHashSet();
+      return results
+         .Where(r => r is not MetadataSymbolResult<TSymbol>
+            || !declared.Contains((GetProjectAssembly(r.Symbol, projectAssemblies), r.Symbol.ToDisplayString(DeduplicationFormat))))
+         .ToList();
+   }
+
+   /// <summary>
+   /// Drops each result that has a variant among the results without type parameters where the name gives no count, as
+   /// C# binds <c>Task</c> to the non-generic type.
+   /// </summary>
+   /// <remarks>
+   /// A variant has the same name, parameters, kind and project assembly, and the same type-parameter count at every
+   /// other level. So <c>List</c> still finds <c>List&lt;T&gt;</c>, and a bare name never chooses between unrelated symbols.
+   /// </remarks>
+   private static IReadOnlyList<SymbolLookupResult<TSymbol>> PreferNonGeneric<TSymbol>(
+      IReadOnlyList<SymbolLookupResult<TSymbol>> results,
+      string[] segments,
+      HashSet<string> projectAssemblies) where TSymbol : ISymbol
+   {
+      var dropped = results
+         .Select(r => (Result: r, Levels: GetTypeParameterLevels(r.Symbol, segments)))
+         .GroupBy(c => (
+            GetProjectAssembly(c.Result.Symbol, projectAssemblies),
+            c.Result.Symbol.Kind,
+            DescribeCandidate(c.Result.Symbol, typeParameters: false).Text))
+         .SelectMany(variants => variants.Where(c => variants.Any(other => IsPreferredVariant(other.Levels, c.Levels))))
+         .Select(c => c.Result)
+         .ToHashSet(ReferenceEqualityComparer.Instance);
+      return results.Where(r => !dropped.Contains(r)).ToList();
+   }
+
+   /// <summary>
+   /// A type-parameter count at one level of a symbol's full name.
+   /// </summary>
+   /// <param name="Count">The number of type parameters at the level.</param>
+   /// <param name="Unspecified">Whether the looked-up name gives the level without a type-parameter count.</param>
+   private readonly record struct TypeParameterLevel(int Count, bool Unspecified);
+
+   /// <summary>
+   /// Returns the type-parameter levels of the symbol and its containers, innermost first.
+   /// </summary>
+   /// <remarks>
+   /// The segments match the levels from the last segment on. An extension block's header names its own type
+   /// parameters, and a member's name may leave out its block, as <see cref="MatchesContainer"/> allows.
+   /// </remarks>
+   private static List<TypeParameterLevel> GetTypeParameterLevels(ISymbol symbol, string[] segments)
+   {
+      var levels = new List<TypeParameterLevel>();
+      var segment = segments.Length - 1;
+      for (var current = symbol; current is not (null or INamespaceSymbol { IsGlobalNamespace: true }); current = current.ContainingSymbol)
+      {
+         if (current is INamedTypeSymbol { IsExtension: true } block)
+         {
+            if (segment >= 0 && RoslynHelpers.IsExtensionBlockNamed(block, segments[segment]))
+               segment--;
+            levels.Add(new TypeParameterLevel(block.Arity, Unspecified: false));
+            continue;
+         }
+
+         levels.Add(new TypeParameterLevel(GetTypeParameterCount(current), segment >= 0 && ParseSegment(segments[segment]).Arity is null));
+         segment--;
+      }
+
+      return levels;
+   }
+
+   /// <summary>
+   /// Returns whether a variant is preferred over another: it has no type parameters at each level where their counts
+   /// differ, and the name gives each of those levels without a count.
+   /// </summary>
+   private static bool IsPreferredVariant(List<TypeParameterLevel> preferred, List<TypeParameterLevel> other)
+   {
+      if (preferred.Count != other.Count)
+         return false;
+
+      var differs = false;
+      for (var i = 0; i < preferred.Count; i++)
+      {
+         if (preferred[i].Count == other[i].Count)
+            continue;
+         if (preferred[i].Count != 0 || !other[i].Unspecified)
+            return false;
+         differs = true;
+      }
+
+      return differs;
+   }
+
+   private static int GetTypeParameterCount(ISymbol symbol) => symbol switch
+   {
+      INamedTypeSymbol type => type.Arity,
+      IMethodSymbol method => method.Arity,
+      _ => 0
+   };
 
    /// <summary>
    /// Find exactly one symbol. Throws if zero or multiple matches.
@@ -392,8 +565,8 @@ public class SymbolLookupService
          ? solution.Projects.Where(p => string.Equals(p.Name, lookup.Project, StringComparison.OrdinalIgnoreCase))
          : solution.Projects;
 
-      // Track symbols we've already added (by display string) to avoid duplicates across projects
-      var seen = new HashSet<string>();
+      var projectAssemblies = GetProjectAssemblies(solution);
+      var seen = new HashSet<SymbolIdentity>();
 
       foreach (var project in projects)
       {
@@ -409,14 +582,14 @@ public class SymbolLookupService
 
          foreach (var typedSymbol in symbols)
          {
-            // Deduplicate by display string (same symbol from different project references)
-            var key = typedSymbol.ToDisplayString(DeduplicationFormat);
-            if (!seen.Add(key))
+            if (!seen.Add(SymbolIdentity.Of(typedSymbol, projectAssemblies)))
                continue;
 
             results.Add(await CreateResultAsync(typedSymbol, solution, cancellationToken));
          }
       }
+
+      results = PreferSourceOfProjectAssemblies(results, projectAssemblies);
 
       // Apply parameter/return type disambiguation filters
       if (lookup.ParameterTypes != null || lookup.ReturnType != null)
@@ -468,6 +641,9 @@ public class SymbolLookupService
    /// accessors. So for an accessor's name, such as <c>get_Item</c>, this also searches for the members that can own
    /// the accessor: the property or event with the name after the prefix, and every indexer, because an indexer's
    /// accessors take its metadata name.
+   ///
+   /// An extension block has no name, so for a block header such as <c>extension(Grid)</c> this searches the blocks
+   /// of every type.
    /// </remarks>
    private static IEnumerable<ISymbol> FindSourceSymbolsByName(Compilation compilation, string name, SymbolFilter filter)
    {
@@ -485,8 +661,20 @@ public class SymbolLookupService
          symbols = symbols.Concat(accessors);
       }
 
+      if (IsExtensionBlockHeader(name) && filter.HasFlag(SymbolFilter.Type))
+      {
+         var blocks = compilation.GetSymbolsWithName(_ => true, SymbolFilter.Type)
+            .OfType<INamedTypeSymbol>()
+            .SelectMany(type => type.GetTypeMembers())
+            .Where(type => type.IsExtension && RoslynHelpers.IsExtensionBlockNamed(type, name));
+         symbols = symbols.Concat(blocks);
+      }
+
       return symbols.Where(symbol => !RoslynHelpers.IsExtensionImplementation(symbol));
    }
+
+   private static bool IsExtensionBlockHeader(string name) =>
+      name.StartsWith("extension(", StringComparison.Ordinal) || name.StartsWith("extension<", StringComparison.Ordinal);
 
    private static IEnumerable<IMethodSymbol> GetAccessors(ISymbol member) => member switch
    {
@@ -642,29 +830,35 @@ public class SymbolLookupService
    }
 
    /// <summary>
-   /// Returns whether a symbol has the name in a segment and, when the segment lists type parameters as in
-   /// <c>Box&lt;T&gt;</c>, as many type parameters. A segment without them matches every arity.
+   /// Returns whether a symbol has the name in a segment and, when the segment gives a type-parameter count as in
+   /// <c>Box&lt;T&gt;</c> or <c>Box`1</c>, that many type parameters.
    /// </summary>
+   /// <remarks>
+   /// A segment without a count matches every count, and <see cref="PreferNonGeneric"/> then narrows the results.
+   /// </remarks>
    private static bool SegmentMatches(ISymbol symbol, string segment)
    {
+      if (symbol is INamedTypeSymbol { IsExtension: true } block)
+         return RoslynHelpers.IsExtensionBlockNamed(block, segment);
+
       var (name, arity) = ParseSegment(segment);
       if (!string.Equals(symbol.Name, name, StringComparison.Ordinal))
          return false;
 
-      return arity is not { } expected || expected == symbol switch
-      {
-         INamedTypeSymbol type => type.Arity,
-         IMethodSymbol method => method.Arity,
-         _ => 0
-      };
+      return arity is not { } expected || expected == GetTypeParameterCount(symbol);
    }
 
    /// <summary>
-   /// Splits a segment such as <c>Map&lt;K, V&gt;</c> into its name and the number of type parameters it lists.
+   /// Splits a segment such as <c>Map&lt;K, V&gt;</c> or <c>Map`2</c> into its name and the number of type parameters
+   /// it gives.
    /// </summary>
-   /// <returns>The name, and the arity, or null when the segment lists no type parameters.</returns>
+   /// <returns>The name, and the arity, or null when the segment gives no type-parameter count.</returns>
    private static (string Name, int? Arity) ParseSegment(string segment)
    {
+      var tick = segment.LastIndexOf('`');
+      if (tick > 0 && int.TryParse(segment.AsSpan(tick + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var count))
+         return (segment[..tick], count);
+
       var open = segment.IndexOf('<');
       if (open <= 0 || !segment.EndsWith('>'))
          return (segment, null);
@@ -876,22 +1070,24 @@ public class SymbolLookupService
    /// Returns the error for a lookup that matched more than one symbol. It lists the candidates in the forms that
    /// <see cref="AmbiguityHint"/> tells a caller to look them up with.
    /// </summary>
+   /// <remarks>
+   /// When the name lookup for a candidate's listed form finds more than the candidate, the candidate also gets its
+   /// declaration position, or else the project to look it up in.
+   /// </remarks>
    private async Task<ToolException> AmbiguousSymbolErrorAsync(string kind, List<ISymbol> candidates, CancellationToken cancellationToken)
    {
-      var descriptions = candidates.Select(DescribeCandidate).ToList();
-      var sameName = descriptions
-         .GroupBy(d => d.NameWithoutTypeParameters)
-         .Where(group => group.Count() > 1)
-         .Select(group => group.Key)
-         .ToHashSet(StringComparer.Ordinal);
-
       var listed = new List<string>();
-      foreach (var (candidate, description) in candidates.Zip(descriptions).Take(5))
+      foreach (var candidate in candidates.Take(5))
       {
-         listed.Add(sameName.Contains(description.NameWithoutTypeParameters)
-            && await FormatDeclarationPositionAsync(candidate, cancellationToken) is { } position
-               ? $"{description.Text} at {position}"
-               : description.Text);
+         var (text, lookup) = DescribeCandidate(candidate, typeParameters: true);
+         if (await FindsOnlyAsync(lookup, candidate, cancellationToken))
+            listed.Add(text);
+         else if (await FormatDeclarationPositionAsync(candidate, cancellationToken) is { } position)
+            listed.Add($"{text} at {position}");
+         else if (await FindProjectThatFindsOnlyAsync(lookup, candidate, cancellationToken) is { } project)
+            listed.Add($"{text} in project {project}");
+         else
+            listed.Add(text);
       }
 
       if (candidates.Count > 5)
@@ -903,15 +1099,60 @@ public class SymbolLookupService
          AmbiguityHint);
    }
 
+   /// <returns>
+   /// The name of a project that declares the symbol and in which the lookup finds the symbol and nothing else, or null
+   /// when there is none.
+   /// </returns>
+   private async Task<string?> FindProjectThatFindsOnlyAsync(LookupByName lookup, ISymbol symbol, CancellationToken cancellationToken)
+   {
+      if (symbol.ContainingAssembly is not { } assembly)
+         return null;
+
+      var projects = _workspaceManager.EnsureSolutionLoaded().Projects
+         .Where(p => string.Equals(p.AssemblyName, assembly.Name, StringComparison.OrdinalIgnoreCase));
+      foreach (var project in projects)
+      {
+         var inProject = new LookupByName
+         {
+            Name = lookup.Name,
+            ParameterTypes = lookup.ParameterTypes,
+            ReturnType = lookup.ReturnType,
+            Project = project.Name
+         };
+         if (await FindsOnlyAsync(inProject, symbol, cancellationToken))
+            return project.Name;
+      }
+
+      return null;
+   }
+
+   /// <summary>
+   /// Returns whether a lookup finds the symbol and nothing else.
+   /// </summary>
+   private async Task<bool> FindsOnlyAsync(SymbolLookup lookup, ISymbol symbol, CancellationToken cancellationToken)
+   {
+      IReadOnlyList<SymbolLookupResult<ISymbol>> found;
+      try
+      {
+         found = await FindAsync<ISymbol>(lookup, filter: null, cancellationToken);
+      }
+      catch (ToolException)
+      {
+         return false;
+      }
+
+      var projectAssemblies = GetProjectAssemblies(_workspaceManager.EnsureSolutionLoaded());
+      return found is [{ Symbol: var foundSymbol }]
+         && SymbolIdentity.Of(foundSymbol, projectAssemblies) == SymbolIdentity.Of(symbol, projectAssemblies);
+   }
+
    /// <summary>
    /// Describes a candidate by a name that a name lookup resolves, then its parameter types and, for a conversion, its
    /// return type, in the forms that parameterTypes and returnType accept.
    /// </summary>
-   /// <returns>
-   /// The description, and the same text without the type-parameter lists. A segment without a type-parameter list
-   /// matches every arity, so a name may not tell apart candidates that share the latter.
-   /// </returns>
-   private static (string Text, string NameWithoutTypeParameters) DescribeCandidate(ISymbol symbol)
+   /// <param name="typeParameters">Whether the name lists the type parameters of its types and methods.</param>
+   /// <returns>The description, and the name lookup that it stands for.</returns>
+   private static (string Text, LookupByName Lookup) DescribeCandidate(ISymbol symbol, bool typeParameters)
    {
       var segments = new List<(string Name, string TypeParameters)>();
       for (var current = symbol; current is not (null or INamespaceSymbol { IsGlobalNamespace: true }); current = current.ContainingSymbol)
@@ -926,29 +1167,32 @@ public class SymbolLookupService
       }
 
       segments.Reverse();
-      var name = string.Join(".", segments.Select(s => s.Name + s.TypeParameters));
-      var bareName = string.Join(".", segments.Select(s => s.Name));
+      var name = string.Join(".", segments.Select(s => typeParameters ? s.Name + s.TypeParameters : s.Name));
 
-      var signature = symbol switch
+      var (parameters, returnType) = symbol switch
       {
-         IPropertySymbol { IsIndexer: true } indexer => $"[{FormatParameters(indexer.Parameters)}]",
+         IPropertySymbol { IsIndexer: true } indexer => (FormatParameters(indexer.Parameters), null),
          IMethodSymbol { MethodKind: MethodKind.Conversion } conversion =>
-            $"({FormatParameters(conversion.Parameters)}) returns {conversion.ReturnType.ToDisplayString(NamespacedKeywordFormat)}",
-         IMethodSymbol method => $"({FormatParameters(method.Parameters)})",
-         _ => ""
+            (FormatParameters(conversion.Parameters), conversion.ReturnType.ToDisplayString(NamespacedKeywordFormat)),
+         IMethodSymbol method => (FormatParameters(method.Parameters), null),
+         _ => ((string[]?)null, (string?)null)
       };
 
       // An indexer's name, this[], takes its parameter list between the brackets.
-      return symbol is IPropertySymbol { IsIndexer: true }
-         ? (name[..^1] + signature[1..], bareName[..^1] + signature[1..])
-         : (name + signature, bareName + signature);
+      var text = parameters is null ? name
+         : symbol is IPropertySymbol ? $"{name[..^1]}{string.Join(", ", parameters)}]"
+         : $"{name}({string.Join(", ", parameters)})";
+      if (returnType is not null)
+         text += $" returns {returnType}";
+
+      return (text, new LookupByName { Name = name, ParameterTypes = parameters, ReturnType = returnType });
    }
 
    private static string FormatTypeParameters(ImmutableArray<ITypeParameterSymbol> typeParameters) =>
       typeParameters.IsEmpty ? "" : $"<{string.Join(", ", typeParameters.Select(t => t.Name))}>";
 
-   private static string FormatParameters(ImmutableArray<IParameterSymbol> parameters) =>
-      string.Join(", ", parameters.Select(p => FormatParameterModifier(p) + p.Type.ToDisplayString(NamespacedKeywordFormat)));
+   private static string[] FormatParameters(ImmutableArray<IParameterSymbol> parameters) =>
+      parameters.Select(p => FormatParameterModifier(p) + p.Type.ToDisplayString(NamespacedKeywordFormat)).ToArray();
 
    /// <summary>
    /// Returns the modifier prefix that <see cref="ParseParameterModifier"/> reads back for the parameter.
@@ -975,18 +1219,7 @@ public class SymbolLookupService
 
       var start = location.GetLineSpan().StartLinePosition;
       var lookup = new LookupByPosition { FilePath = filePath, Line = start.Line + 1, Column = start.Character + 1 };
-      IReadOnlyList<SymbolLookupResult<ISymbol>> found;
-      try
-      {
-         found = await FindByPositionAsync<ISymbol>(lookup, cancellationToken);
-      }
-      catch (ToolException)
-      {
-         // Position mode fails at this location too, so the error cannot offer it.
-         return null;
-      }
-
-      return found is [{ Symbol: var foundSymbol }] && SymbolEqualityComparer.Default.Equals(foundSymbol, symbol)
+      return await FindsOnlyAsync(lookup, symbol, cancellationToken)
          ? $"{_workspaceManager.FormatPath(filePath)}:{lookup.Line}:{lookup.Column}"
          : null;
    }

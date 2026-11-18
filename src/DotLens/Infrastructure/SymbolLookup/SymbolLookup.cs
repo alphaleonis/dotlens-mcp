@@ -37,7 +37,7 @@ public class LookupByPosition : SymbolLookup
 [Description("Locate by name. Use parameterTypes/returnType for overloads.")]
 public class LookupByName : SymbolLookup
 {
-   [Description("Symbol name, e.g. 'MyClass.Method', 'MyClass.this[]' or 'MyExtensions.extension(Receiver).Method'")]
+   [Description("Symbol name, e.g. 'MyClass.Method', 'MyClass.this[]' or 'MyExtensions.extension(Receiver).Method'. 'Box' prefers a non-generic Box, and 'Box<T>' or 'Box`1' selects the generic one")]
    public required string Name { get; set; }
 
    [Description("Limit to specific project")]

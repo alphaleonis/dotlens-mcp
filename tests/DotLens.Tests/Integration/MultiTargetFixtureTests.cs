@@ -1,6 +1,8 @@
 using DotLens.Infrastructure;
+using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Analysis;
 using DotLens.Tools.Shared;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace DotLens.Tests.Integration;
@@ -19,6 +21,24 @@ public class MultiTargetFixtureTests : IClassFixture<MultiTargetFixtureWorkspace
    }
 
    private static CancellationToken CT => TestContext.Current.CancellationToken;
+
+   /// <summary>
+   /// Each project's build references its own framework's assemblies, and both builds declare each source symbol.
+   /// </summary>
+   [Theory]
+   [InlineData("System.String", null, "string")]
+   [InlineData("System.Threading.Tasks.Task", null, "System.Threading.Tasks.Task")]
+   [InlineData("System.Console.WriteLine", new[] { "string" }, "System.Console.WriteLine(string?)")]
+   [InlineData("Program", null, "MultiTargetTestProject.Program")]
+   [InlineData("MultiTargetTestProject", null, "MultiTargetTestProject")]
+   public async Task LookupByName_SymbolInEachFrameworkBuild_FindsItOnce(string name, string[]? parameterTypes, string expected)
+   {
+      var service = new SymbolLookupService(_fixture.Workspace);
+
+      var result = await service.FindSingleAsync<ISymbol>(new LookupByName { Name = name, ParameterTypes = parameterTypes }, cancellationToken: CT);
+
+      Assert.Equal(expected, result.Symbol.ToDisplayString());
+   }
 
    [Fact]
    public void Load_HasOneProjectPerTargetFramework()

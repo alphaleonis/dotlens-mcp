@@ -486,4 +486,21 @@ public class SymbolLookupServiceTests : TestFixtureTestBase
 
       Assert.Equal(ErrorCodes.InvalidParameter, ex.Code);
    }
+
+   /// <summary>
+   /// The second part's offset, above 100, would sort before the first part's as text.
+   /// </summary>
+   [Fact]
+   public void GetFirstDeclaration_PartialTypeInOneFile_ComparesOffsetsAsNumbers()
+   {
+      var source = "partial class P { }\n// " + new string('x', 100) + "\npartial class P { }\n";
+      var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(source, path: "work/P.cs", cancellationToken: CT);
+      var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("FirstDeclaration", [tree]);
+      var type = compilation.GetTypeByMetadataName("P") ?? throw new InvalidOperationException("P not declared");
+
+      var declaration = SymbolLookupService.GetFirstDeclaration(type);
+
+      Assert.Equal([14, source.LastIndexOf("P {", StringComparison.Ordinal)], type.Locations.Select(l => l.SourceSpan.Start).Order());
+      Assert.Equal("WORK/P.CS:14", declaration);
+   }
 }
