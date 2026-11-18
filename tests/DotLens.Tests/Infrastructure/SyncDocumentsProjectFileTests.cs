@@ -267,9 +267,7 @@ public sealed class SyncDocumentsProjectFileTests : IAsyncLifetime
                new FileScope { Path = AppOnlyPath }, preview: false, cancellationToken: CT);
             Assert.True(organized.Data.Applied);
             Assert.Equal(1, organized.Data.FilesChanged);
-            return AppOnlyText
-               .Replace("using System.Text;\n", "", StringComparison.Ordinal)
-               .Replace("()  =>  Math", "() => Math", StringComparison.Ordinal);
+            return AppOnlyText.Replace("using System.Text;\n", "", StringComparison.Ordinal);
          default:
             throw new InvalidOperationException($"Unexpected value: {tool}");
       }

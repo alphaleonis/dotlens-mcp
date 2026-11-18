@@ -1355,9 +1355,6 @@ public class UsingToolsLineEndingsTests : IsolatedProjectTestBase
          """);
    }
 
-   /// <summary>
-   /// The formatter that organize_usings runs puts the moved block comment on a line of its own.
-   /// </summary>
    [Theory]
    [MemberData(nameof(NewLines))]
    public async Task UsingTools_LineEndings_OrganizeUsings_SortsFirstUsingWithSameLineComment_MovesCommentWithIt(string newLine)
@@ -1377,8 +1374,7 @@ public class UsingToolsLineEndingsTests : IsolatedProjectTestBase
 
          """, """
          using System.Text;
-         /* c */
-         using CoreTestProject.Types;
+         /* c */ using CoreTestProject.Types;
 
          namespace CoreTestProject.LineEndings;
 

@@ -3,7 +3,6 @@ using DotLens.Infrastructure;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Formatting;
 using ModelContextProtocol.Server;
 
 namespace DotLens.Tools.Formatting;
@@ -208,11 +207,9 @@ public class OrganizeUsingsTool
       if (root is not CompilationUnitSyntax compilationUnit)
          return null;
 
-      var usings = compilationUnit.Usings;
-      if (usings.Count == 0)
+      var originalCount = UsingDirectiveLayout.GetAllUsings(compilationUnit).Count();
+      if (originalCount == 0)
          return null;
-
-      var originalCount = usings.Count;
 
       // Get semantic model to find unused usings (CS8019)
       var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
@@ -221,37 +218,18 @@ public class OrganizeUsingsTool
 
       // Get diagnostics for CS8019 (unnecessary using directive)
       var compilation = semanticModel.Compilation;
-      var diagnostics = compilation.GetDiagnostics(cancellationToken)
+      var spansToRemove = compilation.GetDiagnostics(cancellationToken)
           .Where(d => d.Id == "CS8019" && d.Location.SourceTree == syntaxTree)
-          .ToList();
-
-      // Get spans of usings to remove
-      var spansToRemove = diagnostics
           .Select(d => d.Location.SourceSpan)
           .ToHashSet();
 
-      // Filter out unused usings
-      var usingsToKeep = usings
-          .Where(u => !spansToRemove.Any(span => u.Span.IntersectsWith(span)))
-          .ToList();
-
-      var removedCount = originalCount - usingsToKeep.Count;
-
-      var newRoot = UsingDirectiveLayout.Organize(compilationUnit, usingsToKeep);
-
-      // Create updated document
-      var updatedDocument = document.WithSyntaxRoot(newRoot);
-
-      // Apply Roslyn formatting to ensure proper formatting/editorconfig is respected
+      var unused = UsingDirectiveLayout.GetAllUsings(compilationUnit)
+          .Where(u => spansToRemove.Any(span => u.Span.IntersectsWith(span)))
+          .ToHashSet();
       var newLine = await UsingDirectiveLayout.GetNewLineAsync(document, cancellationToken);
-      var formattingOptions = (await updatedDocument.GetOptionsAsync(cancellationToken))
-         .WithChangedOption(FormattingOptions.NewLine, newLine);
-      var formattedDocument = await Formatter.FormatAsync(updatedDocument, formattingOptions, cancellationToken);
+      var newRoot = UsingDirectiveLayout.Organize(compilationUnit, u => !unused.Contains(u), newLine);
 
-      var formattedRoot = await formattedDocument.GetSyntaxRootAsync(cancellationToken);
-      var finalCount = (formattedRoot as CompilationUnitSyntax)?.Usings.Count ?? usingsToKeep.Count;
-
-      return (formattedDocument, originalCount, removedCount, finalCount);
+      return (document.WithSyntaxRoot(newRoot), originalCount, unused.Count, originalCount - unused.Count);
    }
 }
 
