@@ -66,3 +66,7 @@
 ## Reference search group — cr8j, 6nks, piat (2026-11-18)
 - First area group: one implementer, one review, one fix round and one full suite closed three bugs in about 25 minutes, against 55-80 minutes per bug before.
 - Ref-ness of an argument comes from the parameter (IArgumentOperation.Parameter.RefKind), not the argument's keyword: ref passed to an in or ref readonly parameter reads.
+
+## Symbol lookup group — k6gs, 1mt4 (2026-11-18)
+- Identity rules for "same symbol" are the regression magnet: each round fixed one case and broke another (cross-project hiding, BCL duplicates per framework, linked files). Enumerate the identity cases first (same declaration in several projects, same name in different declarations, source vs metadata copy, framework builds) and test all of them before choosing a key.
+- A string minimum over "PATH:offset" orders offsets as text; compare structured keys.
