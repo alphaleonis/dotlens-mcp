@@ -43,3 +43,8 @@
 - Rewriting a SyntaxList with WithUsings drops the trivia of removed nodes: file headers, directives and blank lines go with them. A layout helper has to move leading trivia explicitly and treat directives as group boundaries.
 - A parse-without-diagnostics guard in the test helpers (input and output) caught directive placement errors that exact-text assertions alone did not frame.
 - Filtered test runs slowed from seconds to minutes late in the session; check machine load before reading a slow run as a regression.
+
+## dotlens-c293 — using scope (2026-11-18)
+- Removing a whole-document formatter changes the output of tools that leaned on it to clean up trivia (indentation of a using moved off a shared line, line breaks after reordering). Each such cleanup has to be done by the layout code, with a test per indentation style.
+- A using inside a namespace binds relative to it; any tool that writes a name into a nested scope has to bind it at the target position, not at file level.
+- A reviewer's filtered run can move to the background on a shell timeout and still be running; say so in the review brief, or a second run overlaps it.
