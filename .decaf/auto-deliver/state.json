@@ -9,6 +9,6 @@
   ],
   "review_spec": "bugs",
   "started_at": "2026-11-16T17:47:57Z",
-  "updated_at": "2026-11-18T15:51:25Z",
-  "note": "Run resumed 2026-11-18 by operator. Earlier: tmdg e17a624, 9zjg cc318e2, jxhi a530343, p6xt 49df3cd; this session: c293 5de4d65, 4cfl 3f6876a. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature). Open-question entries wait in the phase reflections. One test process at a time; full suites with --max-threads 8."
+  "updated_at": "2026-11-18T16:44:19Z",
+  "note": "Run resumed 2026-11-18 by operator. Earlier: tmdg e17a624, 9zjg cc318e2, jxhi a530343, p6xt 49df3cd; this session: c293 5de4d65, 4cfl 3f6876a, zwvv c9443a7. Out-of-scope ready items ahead of bugs: dotlens-y3c0 (research), dotlens-ljme (feature). Open-question entries wait in the phase reflections. One test process at a time; full suites with --max-threads 8."
 }
