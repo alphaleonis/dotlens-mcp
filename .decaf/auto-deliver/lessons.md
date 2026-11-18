@@ -48,3 +48,8 @@
 - Removing a whole-document formatter changes the output of tools that leaned on it to clean up trivia (indentation of a using moved off a shared line, line breaks after reordering). Each such cleanup has to be done by the layout code, with a test per indentation style.
 - A using inside a namespace binds relative to it; any tool that writes a name into a nested scope has to bind it at the target position, not at file level.
 - A reviewer's filtered run can move to the background on a shell timeout and still be running; say so in the review brief, or a second run overlaps it.
+
+## dotlens-4cfl — using sort and name binding (2026-11-18)
+- To match an IDE behavior, run Roslyn's own implementation in a test (`Formatter.OrganizeImportsAsync`) and compare against it; reading Roslyn's source got the comparer options wrong twice.
+- A culture test proves nothing unless the old comparer orders its inputs differently under that culture; temporarily restore the old code and watch the rows fail.
+- An acceptance line about which API a tool calls is not settled by output-equality tests; settle it by inspecting the call site and say so.
