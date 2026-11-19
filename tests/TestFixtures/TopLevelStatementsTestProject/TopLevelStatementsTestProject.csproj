@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Entry.Main sits beside the top-level statements, which stay the entry point. -->
+    <NoWarn>$(NoWarn);CS7022</NoWarn>
+  </PropertyGroup>
+
+</Project>

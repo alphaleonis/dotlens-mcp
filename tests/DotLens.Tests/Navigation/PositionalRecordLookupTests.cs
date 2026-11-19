@@ -77,7 +77,7 @@ public class PositionalRecordLookupTests : TestFixtureTestBase
             "Property NestedLabel at 15:42: ReadAll 65:50",
             "Property TallyCount at 18:43: DoubledTally 22:31, ReadAll 65:70",
             "Property DoubledTally at 22:15: ReadAll 65:89",
-            "Property SquareEdge at 25:36: ReadAll 66:91, <SquareArea>k__BackingField 27:37, <SquareArea>k__BackingField 27:50",
+            "Property SquareEdge at 25:36: ReadAll 66:91, SquareArea 27:37, SquareArea 27:50",
             "Property SquareArea at 27:15: ReadAll 66:111",
             "Property ExplicitCode at 34:15: ReadAll 66:29",
             "Property TicketCode at 37:40: ReadAll 66:51",

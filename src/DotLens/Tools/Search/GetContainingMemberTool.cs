@@ -62,7 +62,7 @@ public class GetContainingMemberTool
          foreach (var n in node.AncestorsAndSelf())
          {
             var declared = semanticModel.GetDeclaredSymbol(n, cancellationToken);
-            if (declared == null)
+            if (declared == null || declared.IsTopLevelStatementsEntryPoint())
                continue;
 
             // For immediate member, only accept method/property/type
@@ -83,7 +83,8 @@ public class GetContainingMemberTool
          }
       }
 
-      if (immediateMember == null)
+      var isInTopLevelStatements = node?.AncestorsAndSelf().Any(n => n is GlobalStatementSyntax) == true;
+      if (immediateMember == null && !isInTopLevelStatements)
       {
          throw new ToolException(
             ErrorCodes.SymbolNotFound,
@@ -91,7 +92,7 @@ public class GetContainingMemberTool
       }
 
       var solution = document.Project.Solution;
-      var memberResponse = await CreateSymbolResponseAsync(immediateMember, solution, verbosity, cancellationToken);
+      var memberResponse = immediateMember is null ? null : await CreateSymbolResponseAsync(immediateMember, solution, verbosity, cancellationToken);
 
       // Build hierarchy responses if requested
       IReadOnlyList<SymbolResponse>? hierarchyResponses = null;
@@ -119,6 +120,7 @@ public class GetContainingMemberTool
          IMethodSymbol => new[] { "find_callers to see what calls this method", "get_method_source to see the implementation" },
          IPropertySymbol => new[] { "find_references to see usages", "get_type_members to see sibling members" },
          INamedTypeSymbol => new[] { "get_type_members to see all members", "get_type_hierarchy to see inheritance" },
+         null => new[] { "get_file_outline to see the file's declarations" },
          _ => new[] { "get_symbol_info for more details" }
       };
 
@@ -145,8 +147,8 @@ public class GetContainingMemberTool
 /// </summary>
 public record GetContainingMemberResponse
 {
-   [Description("The immediate containing member (method, property, or type).")]
-   public required SymbolResponse Member { get; init; }
+   [Description("The immediate containing member (method, property, or type). Absent in top-level statements, which belong to no member.")]
+   public SymbolResponse? Member { get; init; }
 
    [Description("Full hierarchy from innermost to outermost scope. Only present when includeHierarchy=true.")]
    public IReadOnlyList<SymbolResponse>? Hierarchy { get; init; }

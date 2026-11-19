@@ -28,8 +28,8 @@ public record FindCallersResponse
 /// </summary>
 public record CallerInfo
 {
-   /// <summary>The method or property containing the call.</summary>
-   public required SymbolResponse CallingSymbol { get; init; }
+   [Description("The method, property, field or event that holds the call. Absent for a call in top-level statements.")]
+   public SymbolResponse? CallingSymbol { get; init; }
 
    /// <summary>Location of the call within the calling symbol.</summary>
    public required CallerLocationInfo Location { get; init; }
@@ -100,7 +100,7 @@ public class FindCallersTool
 
                callerList.Add(new CallerInfo
                {
-                  CallingSymbol = await CreateSymbolResponseAsync(callingSymbol, solution, verbosity, cancellationToken),
+                  CallingSymbol = callingSymbol is null ? null : await CreateSymbolResponseAsync(callingSymbol, solution, verbosity, cancellationToken),
                   Location = new CallerLocationInfo
                   {
                      FilePath = _workspace.FormatPath(callerDocument.FilePath),

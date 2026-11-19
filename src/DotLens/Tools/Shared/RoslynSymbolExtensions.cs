@@ -126,6 +126,16 @@ public static class RoslynSymbolExtensions
    }
 
    /// <summary>
+   /// Returns whether the symbol is the method that the compiler generates to hold a file's top-level statements.
+   /// </summary>
+   /// <remarks>
+   /// C# source cannot declare a method with its name, and the method's declaration is the whole file.
+   /// </remarks>
+   public static bool IsTopLevelStatementsEntryPoint(this ISymbol symbol) =>
+      symbol is IMethodSymbol { Name: WellKnownMemberNames.TopLevelStatementsEntryPointMethodName } method
+      && method.DeclaringSyntaxReferences.Any(reference => reference.GetSyntax() is CompilationUnitSyntax);
+
+   /// <summary>
    /// Checks if a syntax node is a declaration for a "callable" method.
    /// This is the syntax-level equivalent of <see cref="IsCallableMethod(IMethodSymbol)"/>.
    /// Includes method declarations, constructors, destructors, operators, conversions,

@@ -12,11 +12,12 @@ namespace DotLens.Tools.Shared;
 internal sealed record SourceReference(ISymbol Definition, Document Document, Location Location);
 
 /// <summary>
-/// The code that refers to a symbol from inside one method, property or field.
+/// The code that refers to a symbol from inside one method, property, field or event.
 /// </summary>
-/// <param name="CallingSymbol">The method, property or field that holds the references.</param>
-/// <param name="Locations">The references in source.</param>
-internal sealed record SymbolCallers(ISymbol CallingSymbol, List<Location> Locations);
+/// <param name="CallingSymbol">The method, property, field or event that holds the references, or null for top-level
+/// statements.</param>
+/// <param name="Locations">The references in source, in source order.</param>
+internal sealed record SymbolCallers(ISymbol? CallingSymbol, List<Location> Locations);
 
 /// <summary>
 /// Finds references and callers with <see cref="SymbolFinder"/>, with its indexer references in null-conditional
@@ -104,22 +105,23 @@ internal static class ReferenceSearch
       || (first.Kind == second.Kind && first.Name == second.Name && HaveSameDeclaration(first, second));
 
    /// <summary>
-   /// Returns the methods, properties and fields whose code refers to <paramref name="symbol"/>, with the references
-   /// inside each.
+   /// Returns the methods, properties, fields and events whose code refers to <paramref name="symbol"/>, with the
+   /// references inside each.
    /// </summary>
    /// <remarks>
    /// The search follows the inheritance hierarchy one way from <paramref name="symbol"/>, to the members it overrides
    /// or implements and to the members that override or implement it.
    /// For an accessor, a reference counts only when it gets or sets the value with that accessor.
    /// A use in a file that several projects compile is listed once, under the calling symbol of the first project
-   /// that reports it.
+   /// that reports it. A use in an initializer or in top-level statements counts under the member that declares it,
+   /// see <see cref="GetDeclaredMember"/>.
    /// </remarks>
    public static async Task<IReadOnlyList<SymbolCallers>> FindCallersAsync(
       ISymbol symbol, Solution solution, CancellationToken cancellationToken)
    {
       var callerInfos = await SymbolFinder.FindCallersAsync(symbol, solution, cancellationToken);
 
-      var callers = new List<SymbolCallers>();
+      var callers = new CallerList();
       var sites = new HashSet<Location>(SiteComparer.Instance);
       foreach (var callerInfo in callerInfos)
       {
@@ -132,11 +134,11 @@ internal static class ReferenceSearch
          }
 
          if (locations.Count > 0)
-            callers.Add(new SymbolCallers(callerInfo.CallingSymbol, locations));
+            callers.Add(callerInfo.CallingSymbol, locations);
       }
 
       if (GetIndexer(symbol.OriginalDefinition) is not { } target)
-         return callers;
+         return callers.ToSourceOrderedList();
 
       var baseMembers = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
       var targetBases = await GetBaseMembersAsync(target, baseMembers, solution, cancellationToken);
@@ -146,18 +148,100 @@ internal static class ReferenceSearch
          if (bound is null || (symbol is IMethodSymbol accessor && !UsesAccessor(binding.Syntax, bound, accessor)) || !sites.Add(binding.Location))
             continue;
 
-         if (GetCallingSymbol(binding.Model, binding.Syntax.SpanStart, cancellationToken) is not { } callingSymbol)
-            continue;
-
-         var existing = callers.FirstOrDefault(caller => SymbolEqualityComparer.Default.Equals(caller.CallingSymbol, callingSymbol));
-         if (existing is not null)
-            existing.Locations.Add(binding.Location);
-         else
-            callers.Add(new SymbolCallers(callingSymbol, [binding.Location]));
+         if (GetCallingSymbol(binding.Model, binding.Syntax.SpanStart, cancellationToken) is { } callingSymbol)
+            callers.Add(callingSymbol, [binding.Location]);
       }
 
-      return callers;
+      return callers.ToSourceOrderedList();
    }
+
+   /// <summary>
+   /// Groups references under the member that declares their calling symbol, one entry for each member in the order
+   /// the members are first added. See <see cref="GetDeclaredMember"/>.
+   /// </summary>
+   /// <remarks>
+   /// The copies of a member in projects that compile its file share one entry, see <see cref="DeclarationComparer"/>.
+   /// </remarks>
+   private sealed class CallerList
+   {
+      private readonly List<SymbolCallers> _callers = [];
+      private readonly Dictionary<ISymbol, SymbolCallers> _byMember = new(DeclarationComparer.Instance);
+      private SymbolCallers? _topLevelStatements;
+
+      public void Add(ISymbol callingSymbol, IEnumerable<Location> locations)
+      {
+         var member = GetDeclaredMember(callingSymbol);
+         var caller = member is null ? _topLevelStatements : _byMember.GetValueOrDefault(member);
+         if (caller is null)
+         {
+            caller = new SymbolCallers(member, []);
+            _callers.Add(caller);
+            if (member is null)
+               _topLevelStatements = caller;
+            else
+               _byMember[member] = caller;
+         }
+
+         caller.Locations.AddRange(locations);
+      }
+
+      /// <summary>
+      /// Returns the callers, with the references of each sorted by file path and then by position in the file.
+      /// </summary>
+      public List<SymbolCallers> ToSourceOrderedList()
+      {
+         foreach (var caller in _callers)
+         {
+            caller.Locations.Sort((first, second) =>
+               string.Compare(first.SourceTree?.FilePath, second.SourceTree?.FilePath, StringComparison.Ordinal) is var byPath and not 0
+                  ? byPath
+                  : first.SourceSpan.Start.CompareTo(second.SourceSpan.Start));
+         }
+
+         return _callers;
+      }
+   }
+
+   /// <summary>
+   /// Compares symbols as declarations in source: the same symbol, or symbols of one kind and name declared at the same
+   /// span of one file path.
+   /// </summary>
+   /// <remarks>
+   /// The copies of a declaration in each project that compiles its file match, whatever the projects' assembly names.
+   /// Documentation IDs do not decide, because local functions with one name in one type share an ID, and so do the
+   /// members of projects with one assembly name.
+   /// </remarks>
+   internal sealed class DeclarationComparer : IEqualityComparer<ISymbol>
+   {
+      public static readonly DeclarationComparer Instance = new();
+
+      public bool Equals(ISymbol? first, ISymbol? second) =>
+         ReferenceEquals(first, second)
+         || (first is not null
+            && second is not null
+            && (SymbolEqualityComparer.Default.Equals(first, second)
+               || (first.Kind == second.Kind && first.Name == second.Name && HaveSameDeclaration(first, second))));
+
+      public int GetHashCode(ISymbol symbol) => HashCode.Combine(symbol.Kind, symbol.Name);
+   }
+
+   /// <summary>
+   /// Returns the member that declares the code of <paramref name="symbol"/>, a calling symbol that find-callers reports.
+   /// </summary>
+   /// <returns>
+   /// The property or event of a backing field that the compiler generates, null for the method that the compiler
+   /// generates for top-level statements, or the symbol itself.
+   /// </returns>
+   /// <remarks>
+   /// The compiler holds the initializer of an auto-property or a field-like event in its backing field, and
+   /// top-level statements in a method of their own. Neither has a declaration in source.
+   /// </remarks>
+   private static ISymbol? GetDeclaredMember(ISymbol symbol) => symbol switch
+   {
+      IFieldSymbol { AssociatedSymbol: { } member } => member,
+      _ when symbol.IsTopLevelStatementsEntryPoint() => null,
+      _ => symbol,
+   };
 
    /// <summary>
    /// Compares source locations as uses: the same span of one file, in any project that compiles the file.
@@ -400,8 +484,8 @@ internal static class ReferenceSearch
    }
 
    /// <summary>
-   /// Returns the method, property or field whose code holds <paramref name="position"/>, as find-callers groups
-   /// references, or null when the position is outside all of them.
+   /// Returns the calling symbol of the code at <paramref name="position"/>, as find-callers reports it, or null when
+   /// the position is outside all members.
    /// </summary>
    /// <remarks>
    /// An accessor counts as its property or event, and a lambda as the member that holds it.

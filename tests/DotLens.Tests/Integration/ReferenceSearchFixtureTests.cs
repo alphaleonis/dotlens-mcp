@@ -3,6 +3,7 @@ using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Intelligence;
 using DotLens.Tools.Navigation;
 using DotLens.Tools.Shared;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace DotLens.Tests.Integration;
@@ -16,6 +17,7 @@ public class ReferenceSearchFixtureTests : IClassFixture<ReferenceSearchFixtureW
    private const string LinkedUses = "LinkedUses.cs";
    private const string GeneratedUses = "GeneratedUses.cs";
    private const string RefAndAttributeWrites = "RefAndAttributeWrites.cs";
+   private const string InitializerUses = "InitializerUses.cs";
 
    private readonly ReferenceSearchFixtureWorkspace _fixture;
 
@@ -228,6 +230,70 @@ public class ReferenceSearchFixtureTests : IClassFixture<ReferenceSearchFixtureW
       await AssertReferencesAsync(new LookupByName { Name = "TagAttribute.Label" }, (RefAndAttributeWrites, 32, 17, ReferenceKind.Write));
    }
 
+   [Fact]
+   public async Task FindCallers_UsesOutsideMemberBodies_NameTheDeclaredMember_Property()
+   {
+      await AssertCallingMembersAsync(
+         new LookupByName { Name = "InitSource.Value" },
+         "Method Next InitializerUses.cs:14:22 <- 14:32",
+         "Property StaticArea InitializerUses.cs:19:22 <- 19:55",
+         "Property Area InitializerUses.cs:21:15 <- 21:50",
+         "Property Deferred InitializerUses.cs:25:21 <- 25:58",
+         "Field Count InitializerUses.cs:29:24 <- 29:43",
+         "Constructor .ctor InitializerUses.cs:42:14 <- 42:52",
+         "Property Scaled InitializerUses.cs:46:15 <- 46:52");
+   }
+
+   [Fact]
+   public async Task FindCallers_UsesOutsideMemberBodies_NameTheDeclaredMember_Method()
+   {
+      await AssertCallingMembersAsync(
+         new LookupByName { Name = "InitSource.Next" },
+         "Property Tracked InitializerUses.cs:23:15 <- 23:76",
+         "Field StaticCount InitializerUses.cs:27:31 <- 27:56",
+         "Event Changed InitializerUses.cs:31:28 <- 31:49",
+         "Property Both InitializerUses.cs:35:15 <- 35:40",
+         "Property Both InitializerUses.cs:35:15 <- 35:63");
+   }
+
+   [Fact]
+   public async Task FindCallers_UsesOutsideMemberBodies_NameTheDeclaredMember_IndexerWithNullConditionalUse()
+   {
+      await AssertCallingMembersAsync(new LookupByName { Name = "InitTable.this[]" }, "Property Head InitializerUses.cs:33:23 <- 33:45");
+   }
+
+   [Fact]
+   public async Task FindCallers_GetterAndInitializerOfOneProperty_GroupUnderOneCaller()
+   {
+      var solution = _fixture.Workspace.EnsureSolutionLoaded();
+      var lookup = await new SymbolLookupService(_fixture.Workspace).FindSingleAsync<ISymbol>(new LookupByName { Name = "InitSource.Next" }, cancellationToken: CT);
+
+      var callers = await ReferenceSearch.FindCallersAsync(lookup.Symbol, solution, CT);
+
+      Assert.Equivalent(
+         new[] { ("Tracked", 1), ("StaticCount", 1), ("Changed", 1), ("Both", 2) },
+         callers.Select(c => (c.CallingSymbol.Name, c.Locations.Count)),
+         strict: true);
+   }
+
+   /// <summary>
+   /// Find-callers reports the call through the interface after the direct call, though it comes first in source.
+   /// </summary>
+   [Fact]
+   public async Task FindCallers_DirectAndInterfaceCallsInOneMember_ListsTheCallsInSourceOrder()
+   {
+      var solution = _fixture.Workspace.EnsureSolutionLoaded();
+      var lookup = await new SymbolLookupService(_fixture.Workspace).FindSingleAsync<ISymbol>(new LookupByName { Name = "OrderSource.Read" }, cancellationToken: CT);
+
+      var callers = await ReferenceSearch.FindCallersAsync(lookup.Symbol, solution, CT);
+
+      var caller = Assert.Single(callers);
+      Assert.Equal("ReadBoth", caller.CallingSymbol?.Name);
+      Assert.Equal(
+         [(15, 77), (15, 93)],
+         caller.Locations.Select(l => (l.GetLineSpan().StartLinePosition.Line + 1, l.GetLineSpan().StartLinePosition.Character + 1)));
+   }
+
    // The workspace gives a generated document a path under the target's intermediate directory.
    private static string GeneratedPath => Path.Combine(
       "obj", "Debug", "net10.0", "Microsoft.Interop.LibraryImportGenerator", "Microsoft.Interop.LibraryImportGenerator", "LibraryImports.g.cs");
@@ -244,6 +310,30 @@ public class ReferenceSearchFixtureTests : IClassFixture<ReferenceSearchFixtureW
             .OrderBy(r => r.FilePath, StringComparer.Ordinal).ThenBy(r => r.Line).ThenBy(r => r.Column));
       Assert.Equal(expected.Length, result.Data.TotalReferences);
    }
+
+   /// <summary>
+   /// Asserts each caller as its kind, name and declaration, then the use, all in InitializerUses.cs.
+   /// </summary>
+   private async Task AssertCallingMembersAsync(SymbolLookup lookup, params string[] expected)
+   {
+      var tool = new FindCallersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.FindCallersAsync(lookup, cancellationToken: CT);
+
+      var callers = (result.Data.Callers ?? throw new InvalidOperationException("Compact verbosity lists callers"))
+         .OrderBy(c => c.Location.Line).ThenBy(c => c.Location.Column)
+         .ToList();
+      Assert.All(callers, c => Assert.Equal(InitializerUses, c.Location.FilePath));
+      Assert.Equal(
+         expected,
+         callers.Select(c => $"{Describe(c.CallingSymbol ?? throw new InvalidOperationException("InitializerUses.cs has no top-level statements"))} <- {c.Location.Line}:{c.Location.Column}"));
+      Assert.Equal(expected.Length, result.Data.TotalCallers);
+   }
+
+   private static string Describe(SymbolResponse symbol) =>
+      symbol.Location is { } location
+         ? $"{symbol.GetType().Name.Replace("SymbolResponse", "")} {symbol.Name} {location.FilePath}:{location.Line}:{location.Column}"
+         : $"{symbol.GetType().Name.Replace("SymbolResponse", "")} {symbol.Name} (no location)";
 
    private async Task AssertCallersAsync(SymbolLookup lookup, params (string Caller, string File, int Line, int Column, bool IsGenerated)[] expected)
    {
