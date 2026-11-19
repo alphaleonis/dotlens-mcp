@@ -13,8 +13,8 @@ namespace DotLens.Tests.Infrastructure;
 /// Covers how a load reports a project that resolved no framework references, and how get_diagnostics carries it.
 /// </summary>
 /// <remarks>
-/// Each test loads its own copy of AnalyzerTestProject. Without a restore, SDK 11 resolves no framework references
-/// for its net10.0 target, as <see cref="TestFixtureRestore"/> describes.
+/// Each test loads its own copy of AnalyzerTestProject, which resolves framework references only through a restore, as
+/// <see cref="TestFixtureRestore.RequireRestoreForTargetingPacksAsync"/> sets up.
 /// </remarks>
 public sealed class UnresolvedFrameworkReferencesTests : IAsyncLifetime
 {
@@ -58,6 +58,7 @@ public sealed class UnresolvedFrameworkReferencesTests : IAsyncLifetime
 
       // Outside the repo, MSBuild would otherwise load the copy with the newest installed SDK.
       File.Copy(Path.Combine(repoRoot, "global.json"), Path.Combine(_tempDir, "global.json"));
+      await TestFixtureRestore.RequireRestoreForTargetingPacksAsync(_tempDir, CT);
       await File.WriteAllTextAsync(SolutionPath, """
          <Solution>
            <Project Path="AnalyzerTestProject/AnalyzerTestProject.csproj" />

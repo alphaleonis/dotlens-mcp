@@ -7,11 +7,15 @@ namespace DotLens.Tests;
 /// Runs <c>dotnet restore</c> on a test fixture solution before a workspace loads it.
 /// </summary>
 /// <remarks>
-/// MSBuildWorkspace does not restore. An unrestored project resolves no framework references when the SDK does not
-/// bundle the targeting pack that its target framework needs, as SDK 11 does not for <c>net10.0</c>.
+/// MSBuildWorkspace does not restore. An unrestored project resolves its framework references only from the packs
+/// folder of the dotnet root, and only when that folder holds the exact targeting pack version that the SDK expects.
+/// SDK 11 does not bundle the pack for <c>net10.0</c>, so whether an unrestored <c>net10.0</c> project resolves depends
+/// on the machine. <see cref="RequireRestoreForTargetingPacksAsync"/> removes that dependency.
 /// </remarks>
 internal static class TestFixtureRestore
 {
+   private const string EmptyTargetingPackRoot = "empty-targeting-pack-root";
+
    private static readonly ConcurrentDictionary<string, Lazy<Task>> s_restores = new(StringComparer.Ordinal);
 
    /// <summary>
@@ -25,6 +29,26 @@ internal static class TestFixtureRestore
    {
       var fullPath = Path.GetFullPath(solutionPath);
       return s_restores.GetOrAdd(fullPath, path => new Lazy<Task>(() => RestoreAsync(path))).Value;
+   }
+
+   /// <summary>
+   /// Writes a <c>Directory.Build.props</c> to the directory that points the targeting pack root of every project below
+   /// it at an empty folder. Those projects then resolve framework references only through a restore.
+   /// </summary>
+   /// <remarks>
+   /// The SDK target ProcessFrameworkReferences looks for a targeting pack in <c>NetCoreTargetingPackRoot</c>. It
+   /// leaves a pack that is missing there to the restore.
+   /// </remarks>
+   public static async Task RequireRestoreForTargetingPacksAsync(string directory, CancellationToken cancellationToken)
+   {
+      Directory.CreateDirectory(Path.Combine(directory, EmptyTargetingPackRoot));
+      await File.WriteAllTextAsync(Path.Combine(directory, "Directory.Build.props"), $"""
+         <Project>
+           <PropertyGroup>
+             <NetCoreTargetingPackRoot>$(MSBuildThisFileDirectory){EmptyTargetingPackRoot}</NetCoreTargetingPackRoot>
+           </PropertyGroup>
+         </Project>
+         """, cancellationToken);
    }
 
    private static async Task RestoreAsync(string solutionPath)

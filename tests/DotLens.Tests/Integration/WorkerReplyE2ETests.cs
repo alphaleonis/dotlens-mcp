@@ -38,6 +38,7 @@ public sealed class WorkerReplyE2ETests : IAsyncLifetime
 
       // Outside the repo, MSBuild would otherwise load the copy with the newest installed SDK.
       File.Copy(Path.Combine(repoRoot, "global.json"), Path.Combine(_tempDir, "global.json"));
+      await TestFixtureRestore.RequireRestoreForTargetingPacksAsync(_tempDir, CT);
       await File.WriteAllTextAsync(SolutionPath, """
          <Solution>
            <Project Path="AnalyzerTestProject/AnalyzerTestProject.csproj" />

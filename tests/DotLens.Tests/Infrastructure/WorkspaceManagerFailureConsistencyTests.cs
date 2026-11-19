@@ -15,6 +15,10 @@ public sealed class WorkspaceManagerFailureConsistencyTests : IAsyncLifetime
 
    private const string BrokenSolutionError = "Unexpected end of file has occurred. Line 1, position 25.";
 
+   private const string UnrestoredAppWarning =
+      "Project App resolved no framework references (System.Object is missing), so its diagnostics are incomplete. "
+      + "Run dotnet restore and call reload_solution.";
+
    private string? _tempDir;
    private WorkspaceManager? _workspaceManager;
 
@@ -37,6 +41,7 @@ public sealed class WorkspaceManagerFailureConsistencyTests : IAsyncLifetime
 
       // Outside the repo, MSBuild would otherwise load the solution with the newest installed SDK.
       File.Copy(Path.Combine(FindRepoRoot(), "global.json"), Path.Combine(_tempDir, "global.json"));
+      await TestFixtureRestore.RequireRestoreForTargetingPacksAsync(_tempDir, CT);
       await File.WriteAllTextAsync(Path.Combine(_tempDir, "App", "App.csproj"), """
          <Project Sdk="Microsoft.NET.Sdk">
            <PropertyGroup>
@@ -79,7 +84,7 @@ public sealed class WorkspaceManagerFailureConsistencyTests : IAsyncLifetime
       await Workspace.LoadSolutionAsync(SolutionPath, CT);
       var solution = Workspace.EnsureSolutionLoaded();
       var loadWarnings = Workspace.LoadWarnings;
-      Assert.NotEmpty(loadWarnings);
+      Assert.Equal([new LoadWarning(UnrestoredAppWarning, Assert.Single(solution.Projects).Id)], loadWarnings);
 
       var ex = await Assert.ThrowsAsync<ToolException>(() => Workspace.LoadSolutionAsync(BrokenSolutionPath, CT));
 
