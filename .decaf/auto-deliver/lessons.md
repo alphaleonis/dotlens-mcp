@@ -92,3 +92,6 @@
 
 ## dotlens-w6b1 — cognitive complexity (2026-11-19)
 - A spec-conformance bug goes fastest when the implementer reads the reference implementation (SonarC# via gh api) beside the spec: it settled two open decisions and exposed where the reference itself departs from the spec. One implementer pass and one approving review, about 20 minutes.
+
+## Type members group — var9, qx4f (2026-11-19)
+- Two small same-tool bugs in one implementer pass and one approving review took about 15 minutes; a guard test that scans source for a class of mistake (tool names in strings) costs little and closes the class, not the instance.
