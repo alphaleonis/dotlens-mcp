@@ -127,3 +127,7 @@
 - A feature whose nib carried a Roslyn probe table and the operator's decisions went through one implementer pass and one approving review with no findings, about 15 minutes end to end; asking the implementer to extend the table (21 shapes) before coding settled every edge the review would otherwise have raised.
 - When the compiler forbids a mix (CS0261: partial parts must all be unions or all structs), "any declaring syntax" and "all declaring syntaxes" coincide; probe for such a rule before writing a per-part keyword decision.
 
+
+## dotlens-lv16 — bounded recursion search (2026-11-19)
+- A differential check against the code being replaced (old vs new answers for every declaration, in several query orders, over three real solutions) gave a behavior-preserving rewrite one approving review with no correctness findings; brief it whenever a change claims "same results".
+- A timing harness needs its warm-up to run the whole measured sequence, sync path included: tiered JIT made whichever cell ran first look 600 ms slower, which read as a failed acceptance criterion. Check a surprising timing by swapping the cell order before blaming the code.
