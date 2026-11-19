@@ -38,6 +38,9 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
          ? field
          : throw new InvalidOperationException("Workspace._latestSolution was not found"));
 
+   private const string WorkspaceWriteFailed = "The workspace could not apply the changes";
+   private const string PlanWriteFailed = "DotLens could not write every change";
+
    private readonly AsyncLock _writeLock = new();
    private MSBuildWorkspace? _workspace;
    private Solution? _solution;
@@ -99,34 +102,61 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       {
          _logger.LogInformation("Loading solution: {SolutionPath}", solutionPath);
 
-         // Dispose existing workspace
-         _workspace?.Dispose();
-         ResetDocumentCache();
-         _loadWarnings = [];
-
-         _workspace = MSBuildWorkspace.Create();
-         _workspace.RegisterWorkspaceFailedHandler(args =>
+         // The new workspace replaces the current one only after its load succeeds, so a failed load leaves the
+         // previous solution with the workspace that holds it.
+         var workspace = MSBuildWorkspace.Create();
+         workspace.RegisterWorkspaceFailedHandler(args =>
          {
             _logger.LogWarning("Workspace warning: {Message}", args.Diagnostic.Message);
             lock (_workspaceDiagnosticsLock)
                _workspaceDiagnostics?.Add(args.Diagnostic);
          });
 
+         Solution solution;
+         List<LoadWarning> loadWarnings;
+         List<WorkspaceDiagnostic>? workspaceDiagnostics = null;
+         var loaded = false;
          CollectWorkspaceDiagnostics();
          try
          {
-            _solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+            try
+            {
+               solution = await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+            }
+            finally
+            {
+               workspaceDiagnostics = TakeWorkspaceDiagnostics();
+            }
+
+            solution = SweepPlaceholders(workspace, solution);
+            var frameworkWarnings = await FindProjectsWithoutFrameworkReferencesAsync(solution, cancellationToken);
+            loadWarnings = [.. workspaceDiagnostics.Select(d => new LoadWarning($"{d.Kind}: {d.Message}", null)), .. frameworkWarnings];
+            loaded = true;
+         }
+         catch (Exception ex) when (ex is not OperationCanceledException)
+         {
+            _logger.LogError(ex, "Failed to load solution: {SolutionPath}", solutionPath);
+            var messages = (workspaceDiagnostics ?? TakeWorkspaceDiagnostics()).Select(d => $"{d.Kind}: {d.Message}").ToList();
+            throw new ToolException(
+               ErrorCodes.AnalysisFailed,
+               $"Failed to load solution {solutionPath}: {ex.Message}",
+               _solution?.FilePath is { } previousPath
+                  ? $"Fix the cause, then load the solution again. {previousPath} stays loaded."
+                  : "Fix the cause, then load the solution again.",
+               messages.Count > 0 ? messages : null);
          }
          finally
          {
-            _loadWarnings = [.. TakeWorkspaceDiagnostics()
-               .Select(d => new LoadWarning($"{d.Kind}: {d.Message}", null))];
+            if (!loaded)
+               workspace.Dispose();
          }
 
-         _solution = SweepPlaceholders(_workspace, _solution);
+         _workspace?.Dispose();
+         _workspace = workspace;
+         _solution = solution;
+         _loadWarnings = loadWarnings;
          _solutionLoadedAt = DateTime.UtcNow;
-         var frameworkWarnings = await FindProjectsWithoutFrameworkReferencesAsync(_solution, cancellationToken);
-         _loadWarnings = [.. _loadWarnings, .. frameworkWarnings];
+         ResetDocumentCache();
 
          var projectCount = _solution.ProjectIds.Count;
          var documentCount = _solution.Projects.Sum(p => p.DocumentIds.Count);
@@ -466,13 +496,13 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       FileSnapshot snapshot;
       try
       {
-         snapshot = FileSnapshot.Take(FilesTheWorkspaceWrites(stagedSolution, newSolution));
+         snapshot = FileSnapshot.Take(FilesTheWorkspaceWrites(stagedSolution, newSolution).Concat(plan.FilesItWrites));
       }
       catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,
-            $"The workspace could not apply the changes, because a file it writes could not be read first: {ex.Message}",
+            $"DotLens could not apply the changes, because a file that the change writes or deletes could not be read first: {ex.Message}",
             "Fix the cause, then try again.");
       }
 
@@ -501,15 +531,29 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
       if (exception is not null || failures.Count > 0)
       {
          var cause = exception?.Message ?? string.Join(" ", failures.Select(d => d.Message));
-         RollBack(_workspace, currentSolution, snapshot, cause, exception);
+         RollBack(_workspace, currentSolution, snapshot, WorkspaceWriteFailed, cause, exception);
       }
 
       if (success)
       {
+         List<string> planFailures;
+         Exception? planException = null;
+         try
+         {
+            planFailures = plan.Apply();
+         }
+         catch (Exception ex)
+         {
+            planException = ex;
+            planFailures = [ex.Message];
+         }
+
+         if (planFailures.Count > 0)
+            RollBack(_workspace, currentSolution, snapshot, PlanWriteFailed, string.Join("; ", planFailures), planException);
+
          // TryApplyChanges updates workspace.CurrentSolution, so use that
          _solution = _workspace.CurrentSolution;
          ResetDocumentCache();
-         plan.Apply();
       }
       else
       {
@@ -534,33 +578,33 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
    }
 
    /// <summary>
-   /// Returns both solutions to the one before a failed write, and writes back the files that the workspace wrote.
+   /// Returns both solutions to the one before a failed write, and writes back the files that the write changed.
    /// </summary>
+   /// <param name="failure">The clause that opens the message and says which part of the write failed.</param>
    /// <exception cref="ToolException">Always, with the cause and each file that could not be restored.</exception>
    [DoesNotReturn]
    private void RollBack(
-      MSBuildWorkspace workspace, Solution solution, FileSnapshot snapshot, string cause, Exception? exception)
+      MSBuildWorkspace workspace, Solution solution, FileSnapshot snapshot, string failure, string cause, Exception? exception)
    {
       WorkspaceLatestSolution.Value.SetValue(workspace, solution);
       _solution = solution;
       ResetDocumentCache();
 
       var (restored, restoreFailures) = snapshot.Restore(FormatPath);
-      _logger.LogWarning(exception, "TryApplyChanges failed: {Cause}", cause);
+      _logger.LogWarning(exception, "{Failure}: {Cause}", failure, cause);
       if (restoreFailures.Count > 0)
       {
          throw new ToolException(
             ErrorCodes.ApplyChangesFailed,
-            "The workspace could not apply the changes, and these files could not be restored: "
-               + $"{string.Join("; ", restoreFailures)}. The cause: {cause}",
+            $"{failure}, and these files could not be restored: {string.Join("; ", restoreFailures)}. The cause: {cause}",
             "Restore the files on disk, then call reload_solution.");
       }
 
       throw new ToolException(
          ErrorCodes.ApplyChangesFailed,
          restored > 0
-            ? $"The workspace could not apply the changes, so DotLens restored the files it had written: {cause}"
-            : $"The workspace could not apply the changes and left every file unchanged: {cause}",
+            ? $"{failure}, so DotLens restored the files it had written: {cause}"
+            : $"{failure} and left every file unchanged: {cause}",
          "Fix the cause, then try again.");
    }
 

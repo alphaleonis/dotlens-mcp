@@ -23,6 +23,9 @@ public interface IWorkspace : IReadOnlyWorkspace, IDisposable
    /// <summary>
    /// Loads a solution from the specified path.
    /// </summary>
+   /// <exception cref="ToolException">
+   /// The file does not exist, or the load failed. The solution loaded before stays loaded then.
+   /// </exception>
    Task<ToolResult<WorkerLoadSolutionResult>> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default);
 
    /// <summary>
@@ -44,8 +47,8 @@ public interface IWorkspace : IReadOnlyWorkspace, IDisposable
    /// agree.
    /// </param>
    /// <remarks>
-   /// It writes added and removed documents as <see cref="DocumentChangePlan"/> describes. When the workspace fails
-   /// partway through its writes, it writes back the files it wrote and keeps the solution it had before.
+   /// It writes added and removed documents as <see cref="DocumentChangePlan"/> describes. When a write fails partway,
+   /// it writes back the files it wrote and keeps the solution it had before.
    /// </remarks>
    /// <returns>
    /// True if changes were applied successfully, or false when the workspace refused them. Nothing was written then.
@@ -55,9 +58,8 @@ public interface IWorkspace : IReadOnlyWorkspace, IDisposable
    /// The token was canceled before the write started. Nothing was written then.
    /// </exception>
    /// <exception cref="ToolException">
-   /// A document change cannot be written to the project files, or the workspace failed partway through its writes. It
-   /// is also thrown after the changes were applied, when a write that <see cref="DocumentChangePlan.Apply"/> makes
-   /// fails. The message names each file that is left differing from the solution.
+   /// A document change cannot be written to the project files, or a write failed partway. The message names the cause
+   /// and each file that could not be restored.
    /// </exception>
    bool ApplyChanges(Solution newSolution, CancellationToken cancellationToken);
 

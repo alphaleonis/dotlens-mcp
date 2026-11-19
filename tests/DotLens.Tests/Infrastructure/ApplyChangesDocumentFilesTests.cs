@@ -697,27 +697,44 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
    }
 
    /// <summary>
-   /// App.csproj is read-only, so its edit fails, while the deletion of Lib/Glob.cs in the same change still runs.
+   /// App.csproj is read-only, so its edit fails after the workspace applied the change and Lib/Glob.cs was deleted.
    /// </summary>
    [Fact]
-   public async Task ApplyChanges_RemoveDocument_WriteFails_RunsTheOtherWritesAndReportsIt()
+   public async Task WorkspaceManager_FailureConsistency_PlanWriteFailsAfterApply_RestoresDiskAndBothSolutions()
    {
       var solution = Workspace.EnsureSolutionLoaded();
       var appSharedId = Assert.Single(solution.GetDocumentIdsWithFilePath(SharedPath), id => solution.GetProject(id.ProjectId)?.Name == "App");
       var globId = Assert.Single(solution.GetDocumentIdsWithFilePath(GlobPath));
+      var globBytes = await File.ReadAllBytesAsync(GlobPath, CT);
+      var projectBytes = await ReadProjectBytesAsync();
       File.SetAttributes(AppProjectPath, FileAttributes.ReadOnly);
 
       ToolException ex;
-      using (await Workspace.WriteLock.AcquireAsync(CT))
-         ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(solution.RemoveDocuments([appSharedId, globId]), CT));
+      try
+      {
+         using (await Workspace.WriteLock.AcquireAsync(CT))
+            ex = Assert.Throws<ToolException>(() => Workspace.ApplyChanges(solution.RemoveDocuments([appSharedId, globId]), CT));
+      }
+      finally
+      {
+         File.SetAttributes(AppProjectPath, FileAttributes.Normal);
+      }
 
-      File.SetAttributes(AppProjectPath, FileAttributes.Normal);
+      Assert.Equal(ErrorCodes.ApplyChangesFailed, ex.Code);
       Assert.Equal(
-         $"The changes were applied to the solution, but these files could not be updated: {Workspace.FormatPath(AppProjectPath)} (Access to the path '{AppProjectPath}' is denied.)",
+         $"DotLens could not write every change, so DotLens restored the files it had written: {Workspace.FormatPath(AppProjectPath)} (Access to the path '{AppProjectPath}' is denied.)",
          ex.Message);
-      Assert.False(File.Exists(GlobPath));
-      Assert.Equal(AppProjectText, await File.ReadAllTextAsync(AppProjectPath, CT));
-      Assert.Equal(["Lib"], ProjectNamesCompiling(SharedPath));
+      Assert.Equal("Fix the cause, then try again.", ex.Hint);
+      Assert.Equal(globBytes, await File.ReadAllBytesAsync(GlobPath, CT));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
+      Assert.Same(solution, Workspace.EnsureSolutionLoaded());
+      Assert.Same(solution, Workspace.WorkspaceSolution);
+      Assert.Equal(["App", "Lib"], ProjectNamesCompiling(SharedPath));
+      Assert.Equal(["Lib"], ProjectNamesCompiling(GlobPath));
+
+      await AssertLaterWriteChangesOnlyItsFileAsync();
+      Assert.Equal(globBytes, await File.ReadAllBytesAsync(GlobPath, CT));
+      Assert.Equal(projectBytes, await ReadProjectBytesAsync());
    }
 
    [Fact]

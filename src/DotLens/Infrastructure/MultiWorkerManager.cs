@@ -272,6 +272,8 @@ public class MultiWorkerManager : IMultiWorkerManager
                var errorText = result.Content
                    .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
                    .FirstOrDefault()?.Text ?? "Unknown error";
+               if (ParseWorkerError(errorText) is { } workerError)
+                  throw workerError;
                throw new InvalidOperationException($"worker_load_solution failed: {errorText}");
             }
 
@@ -530,15 +532,7 @@ public class MultiWorkerManager : IMultiWorkerManager
          // The MCP SDK does NOT throw on tool execution errors — it returns
          // CallToolResult with IsError = true. Check this before parsing content.
          if (result.IsError == true)
-         {
-            var errorText = result.Content
-                .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
-                .FirstOrDefault()?.Text ?? "Unknown worker error";
-            throw new ToolException(
-                ErrorCodes.WorkerCommunicationFailed,
-                $"Worker tool '{toolName}' failed: {errorText}",
-                "The worker reported an error. Check logs for details.");
-         }
+            throw WorkerToolError(toolName, result);
 
          // Extract text content from MCP response
          var textContent = result.Content
@@ -606,17 +600,73 @@ public class MultiWorkerManager : IMultiWorkerManager
       }
    }
 
+   /// <summary>
+   /// Returns the exception for a worker reply that has IsError set.
+   /// </summary>
+   /// <returns>
+   /// The worker's own error when the reply is a DotLens error response, or WORKER_COMMUNICATION_FAILED with the reply's
+   /// text.
+   /// </returns>
+   internal static ToolException WorkerToolError(string toolName, ModelContextProtocol.Protocol.CallToolResult result)
+   {
+      var errorText = result.Content
+          .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
+          .FirstOrDefault()?.Text ?? "Unknown worker error";
+      return ParseWorkerError(errorText) ?? new ToolException(
+          ErrorCodes.WorkerCommunicationFailed,
+          $"Worker tool '{toolName}' failed: {errorText}",
+          "The worker reported an error. Check logs for details.");
+   }
+
+   /// <summary>
+   /// Returns the error that a worker's DotLens error response describes, with its code, message, hint and context.
+   /// </summary>
+   /// <returns>The error, or null when the text is not a DotLens error response.</returns>
+   internal static ToolException? ParseWorkerError(string text)
+   {
+      try
+      {
+         using var doc = JsonDocument.Parse(text);
+         if (doc.RootElement.ValueKind != JsonValueKind.Object
+            || !doc.RootElement.TryGetProperty("error", out var error)
+            || error.ValueKind != JsonValueKind.Object
+            || !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.String
+            || !error.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.String)
+         {
+            return null;
+         }
+
+         var hint = error.TryGetProperty("hint", out var hintElement) && hintElement.ValueKind == JsonValueKind.String
+            ? hintElement.GetString()
+            : null;
+         object? context = error.TryGetProperty("context", out var contextElement)
+            && contextElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined)
+            ? contextElement.Clone()
+            : null;
+         return new ToolException(code.GetString() ?? "", message.GetString() ?? "", hint, context);
+      }
+      catch (JsonException)
+      {
+         return null;
+      }
+   }
+
    private async Task<WorkerInstance> SpawnWorkerAsync(string solutionPath, CancellationToken cancellationToken)
    {
       var exePath = Environment.ProcessPath
           ?? throw new InvalidOperationException("Cannot determine executable path");
 
-      _logger.LogInformation("Starting worker process: {ExePath} --worker", exePath);
+      // A server started as "dotnet DotLens.dll" runs in the dotnet host, which needs the assembly to run.
+      string[] arguments = string.Equals(Path.GetFileNameWithoutExtension(exePath), "dotnet", StringComparison.OrdinalIgnoreCase)
+         ? [typeof(MultiWorkerManager).Assembly.Location, "--worker"]
+         : ["--worker"];
+
+      _logger.LogInformation("Starting worker process: {ExePath} {Arguments}", exePath, string.Join(" ", arguments));
 
       var clientTransport = new StdioClientTransport(new StdioClientTransportOptions
       {
          Command = exePath,
-         Arguments = ["--worker"],
+         Arguments = arguments,
          Name = $"DotLens Worker ({Path.GetFileName(solutionPath)})"
       });
 

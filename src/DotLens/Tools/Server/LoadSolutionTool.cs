@@ -157,6 +157,10 @@ public class LoadSolutionTool
       {
          throw;
       }
+      catch (ToolException)
+      {
+         throw;
+      }
       catch (TimeoutException ex)
       {
          _logger.LogError(ex, "Solution load timed out: {SolutionPath}", solutionPath);

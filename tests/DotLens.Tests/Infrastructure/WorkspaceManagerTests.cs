@@ -46,12 +46,17 @@ public class WorkspaceManagerTests : IsolatedProjectTestBase
    [Fact]
    public async Task LoadSolution_WithValidPath_Succeeds()
    {
-      // Already loaded in InitializeAsync, but we can verify the result
-      var result = await WorkspaceManager.LoadSolutionAsync(TestFixturesSolutionPath);
+      var result = await WorkspaceManager.LoadSolutionAsync(TestFixturesSolutionPath, CT);
 
-      AssertSuccess(result);
-      var data = GetData(result);
-      Assert.True(data.GetIntOrNull("projectCount") >= 1);
+      var solution = WorkspaceManager.EnsureSolutionLoaded();
+      Assert.Equal(TestFixturesSolutionPath, solution.FilePath);
+      Assert.Equivalent(
+         new[] { "AnalyzerTestProject", "InheritanceTestProject", "CoreTestProject", "ConflictingTypesProject" },
+         solution.Projects.Select(p => p.Name));
+      Assert.Equal(TestFixturesSolutionPath, result.Data.SolutionPath);
+      Assert.Equal(4, result.Data.ProjectCount);
+      Assert.Equal(solution.Projects.Sum(p => p.DocumentIds.Count), result.Data.DocumentCount);
+      Assert.Empty(result.Data.Warnings);
    }
 
    [Fact]

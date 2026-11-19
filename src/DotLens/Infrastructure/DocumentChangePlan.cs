@@ -48,6 +48,11 @@ internal sealed class DocumentChangePlan
    public IReadOnlyList<DocumentId> RemovedDocumentIds { get; }
 
    /// <summary>
+   /// The project files that <see cref="Apply"/> edits and the files that it deletes.
+   /// </summary>
+   public IEnumerable<string> FilesItWrites => _projectFileEdits.Keys.Concat(_filesToDelete);
+
+   /// <summary>
    /// Plans the document changes that <paramref name="newSolution"/> makes to <paramref name="oldSolution"/>.
    /// </summary>
    /// <param name="evaluationBudget">The time that all MSBuild evaluations of the plan share.</param>
@@ -173,10 +178,12 @@ internal sealed class DocumentChangePlan
    /// Writes the planned changes after the workspace applied the rest of the change.
    /// </summary>
    /// <remarks>
-   /// Every write runs even when an earlier one fails, so the disk matches the applied solution as far as it can.
+   /// Every write runs even when an earlier one fails, so the result names each file that could not be written.
    /// </remarks>
-   /// <exception cref="ToolException">A project file or a file could not be written. The others were written.</exception>
-   public void Apply()
+   /// <returns>
+   /// Each file that could not be written, as the formatPath of <see cref="Create"/> formats it, with the reason.
+   /// </returns>
+   public List<string> Apply()
    {
       var failures = new List<string>();
       foreach (var edit in _projectFileEdits.Values)
@@ -184,13 +191,7 @@ internal sealed class DocumentChangePlan
       foreach (var filePath in _filesToDelete)
          Try(filePath, () => File.Delete(filePath));
 
-      if (failures.Count > 0)
-      {
-         throw new ToolException(
-            ErrorCodes.ApplyChangesFailed,
-            $"The changes were applied to the solution, but these files could not be updated: {string.Join("; ", failures)}",
-            "Fix the files on disk to match the solution, or call reload_solution to read them again.");
-      }
+      return failures;
 
       void Try(string path, Action write)
       {
