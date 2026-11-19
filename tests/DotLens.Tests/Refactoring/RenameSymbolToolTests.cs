@@ -40,6 +40,30 @@ public class RenameSymbolToolTests : IsolatedProjectTestBase
       Assert.Equal(1, data.GetIntOrNull("totalFiles"));
    }
 
+   /// <summary>
+   /// A positional parameter's position resolves the record's property, and the rename cascades to the parameter.
+   /// </summary>
+   [Fact]
+   public async Task RenameSymbol_AtPositionalParameter_RenamesThePropertyAndTheParameter()
+   {
+      var filePath = GetCoreTestProjectPath("Lookup/PositionalRecordLookups.cs");
+
+      var original = await File.ReadAllTextAsync(filePath, CT);
+
+      var result = await _tool.RenameSymbolAsync(
+         new LookupByPosition { FilePath = filePath, Line = 25, Column = 36 },
+         newName: "SquareSpan",
+         preview: false,
+         cancellationToken: CT);
+
+      AssertSuccess(result);
+      var data = GetData(result);
+      Assert.Equal("SquareEdge", data.GetString("symbolName"));
+      Assert.Equal("property", data.GetString("symbolKind"));
+      Assert.Equal(1, data.GetInt("totalFiles"));
+      Assert.Equal(original.Replace("SquareEdge", "SquareSpan", StringComparison.Ordinal), await File.ReadAllTextAsync(filePath, CT));
+   }
+
    [Fact]
    public async Task RenameSymbol_ByName_WithPreview_ShowsChanges()
    {

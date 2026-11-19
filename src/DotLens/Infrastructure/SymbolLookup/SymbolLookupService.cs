@@ -59,7 +59,7 @@ public class SymbolLookupService
    /// Find all symbols matching the lookup criteria.
    /// Returns both source and metadata symbols.
    /// </summary>
-   /// <param name="filter">Optional predicate to filter results after lookup.</param>
+   /// <param name="filter">Optional result predicate, which also picks among the symbols a position declares.</param>
    public async Task<IReadOnlyList<SymbolLookupResult<TSymbol>>> FindAsync<TSymbol>(
       SymbolLookup lookup,
       Func<TSymbol, bool>? filter = null,
@@ -69,14 +69,14 @@ public class SymbolLookupService
 
       var results = lookup switch
       {
-         LookupByPosition pos => await FindByPositionAsync<TSymbol>(pos, cancellationToken),
+         LookupByPosition pos => await FindByPositionAsync(pos, filter, cancellationToken),
          LookupByName name => await FindByNameAsync<TSymbol>(name, cancellationToken),
          _ => throw new ToolException(
             ErrorCodes.InvalidParameter,
             $"Unknown lookup type: {lookup.GetType().Name}")
       };
 
-      if (filter != null)
+      if (filter != null && lookup is LookupByName)
       {
          results = results.Where(r => filter(r.Symbol)).ToList();
       }
@@ -259,7 +259,7 @@ public class SymbolLookupService
    /// <summary>
    /// Find exactly one symbol. Throws if zero or multiple matches.
    /// </summary>
-   /// <param name="filter">Optional predicate to filter results after lookup.</param>
+   /// <param name="filter">Optional result predicate, which also picks among the symbols a position declares.</param>
    public async Task<SymbolLookupResult<TSymbol>> FindSingleAsync<TSymbol>(
       SymbolLookup lookup,
       Func<TSymbol, bool>? filter = null,
@@ -442,8 +442,16 @@ public class SymbolLookupService
       };
    }
 
+   /// <summary>
+   /// Returns the symbol at the position that is a <typeparamref name="TSymbol"/> and passes the filter.
+   /// </summary>
+   /// <remarks>
+   /// A record's positional parameter declares both the parameter and the property that the record synthesizes for it.
+   /// When both pass, the lookup returns the property, which search_symbols reports at that position.
+   /// </remarks>
    private async Task<IReadOnlyList<SymbolLookupResult<TSymbol>>> FindByPositionAsync<TSymbol>(
       LookupByPosition lookup,
+      Func<TSymbol, bool>? filter,
       CancellationToken cancellationToken) where TSymbol : ISymbol
    {
       if (string.IsNullOrWhiteSpace(lookup.FilePath))
@@ -484,8 +492,11 @@ public class SymbolLookupService
          return [];
       }
 
-      // Filter by requested type
-      if (symbol is not TSymbol typedSymbol)
+      var typedSymbol = GetSynthesizedProperties(symbol, node)
+         .Append(symbol)
+         .OfType<TSymbol>()
+         .FirstOrDefault(candidate => filter == null || filter(candidate));
+      if (typedSymbol is null)
       {
          return [];
       }
@@ -496,10 +507,33 @@ public class SymbolLookupService
          Symbol = typedSymbol,
          Compilation = semanticModel.Compilation,
          Document = document,
-         Syntax = await GetDeclaringSyntaxAsync(symbol, cancellationToken)
+         Syntax = await GetDeclaringSyntaxAsync(typedSymbol, cancellationToken)
       };
 
       return [result];
+   }
+
+   /// <summary>
+   /// Returns the properties that a record synthesizes for <paramref name="symbol"/> when it is a positional parameter
+   /// whose declaration holds <paramref name="node"/>.
+   /// </summary>
+   /// <remarks>
+   /// A synthesized property's declaring syntax is the parameter's, and a property that the record declares itself has
+   /// a declaration of its own, as PositionalRecordLookupTests pins.
+   /// </remarks>
+   private static IEnumerable<IPropertySymbol> GetSynthesizedProperties(ISymbol symbol, SyntaxNode? node)
+   {
+      if (node is null
+         || symbol is not IParameterSymbol { ContainingSymbol: IMethodSymbol { MethodKind: MethodKind.Constructor, ContainingType: { } type } } parameter)
+         return [];
+
+      var declarations = parameter.DeclaringSyntaxReferences
+         .Where(reference => reference.SyntaxTree == node.SyntaxTree && reference.Span.Contains(node.Span))
+         .ToList();
+      return type.GetMembers(parameter.Name)
+         .OfType<IPropertySymbol>()
+         .Where(property => property.DeclaringSyntaxReferences.Any(reference =>
+            declarations.Any(declaration => declaration.SyntaxTree == reference.SyntaxTree && declaration.Span == reference.Span)));
    }
 
    /// <summary>
@@ -1214,7 +1248,7 @@ public class SymbolLookupService
 
    /// <returns>
    /// The file, line and column of the symbol's declared name, or null when a position lookup there does not find the
-   /// symbol, as for a record's positional property, which the lookup finds as its constructor parameter.
+   /// symbol.
    /// </returns>
    private async Task<string?> FormatDeclarationPositionAsync(ISymbol symbol, CancellationToken cancellationToken)
    {

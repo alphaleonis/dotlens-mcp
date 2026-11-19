@@ -57,13 +57,13 @@ public class SymbolLookupIdentityTests : IsolatedProjectTestBase
    }
 
    /// <summary>
-   /// CoreTestProject and InheritanceTestProject each declare Twin.Pair in a file of their own. A position lookup finds
-   /// neither the compiler's ToString nor the positional property, so the project tells those apart.
+   /// CoreTestProject and InheritanceTestProject each declare Twin.Pair in a file of their own. The compiler's
+   /// ToString has no position to look up, so the project tells those apart.
    /// </summary>
    [Theory]
    [InlineData("Twin.Pair", new[] { "Twin.Pair at CoreTestProject/Twin/Pair.cs:3:15", "Twin.Pair at InheritanceTestProject/Twin/Pair.cs:3:15" })]
    [InlineData("Pair.ToString", new[] { "Twin.Pair.ToString() in project CoreTestProject", "Twin.Pair.ToString() in project InheritanceTestProject" })]
-   [InlineData("Twin.Pair.Value", new[] { "Twin.Pair.Value in project CoreTestProject", "Twin.Pair.Value in project InheritanceTestProject" })]
+   [InlineData("Twin.Pair.Value", new[] { "Twin.Pair.Value at CoreTestProject/Twin/Pair.cs:3:24", "Twin.Pair.Value at InheritanceTestProject/Twin/Pair.cs:3:24" })]
    public async Task LookupByName_SameNameDeclaredInTwoProjects_EachListedCandidateFindsItself(string name, string[] expected)
    {
       const string source = """
