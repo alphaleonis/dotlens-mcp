@@ -26,9 +26,9 @@ public class DotLensOptions
 
    /// <summary>
    /// Log level for the application.
-   /// Default: Warning. Valid values: Trace, Debug, Information, Warning, Error.
+   /// Default: Warning. Valid values: Verbose, Debug, Information, Warning, Error, Fatal.
    /// </summary>
-   [Description("Log level (Trace, Debug, Information, Warning, Error)")]
+   [Description("Log level (Verbose, Debug, Information, Warning, Error, Fatal)")]
    public LogEventLevel LogLevel { get; set; } = LogEventLevel.Warning;
 
    /// <summary>

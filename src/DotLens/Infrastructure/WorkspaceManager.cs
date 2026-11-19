@@ -314,7 +314,7 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
          return ToolResult.Create<IWorkerHealthCheckResult>(
             new WorkerHealthCheckNotReadyResult
             {
-               Message = "No solution loaded. Call roslyn:load_solution first or set DOTNET_SOLUTION_PATH environment variable.",
+               Message = "No solution loaded. Call load_solution first or set DOTLENS_SolutionPath environment variable.",
                Solution = null,
                Workspace = null
             });
@@ -450,7 +450,7 @@ public sealed class WorkspaceManager : IWorkspace, IDisposable
    {
       if (_solution == null)
       {
-         throw new InvalidOperationException("No solution loaded. Call load_solution first or set DOTNET_SOLUTION_PATH environment variable.");
+         throw new InvalidOperationException("No solution loaded. Call load_solution first or set DOTLENS_SolutionPath environment variable.");
       }
       return _solution;
    }
