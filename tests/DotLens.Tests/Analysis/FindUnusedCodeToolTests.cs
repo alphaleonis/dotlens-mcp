@@ -676,7 +676,8 @@ public class FindUnusedCodeToolTests : TestFixtureTestBase
          projectName: "CoreTestProject",
          includeInternal: true, // Include UnusedInternalClass
          verbosity: ToolResultVerbosity.Summary,
-         maxResults: 50,
+         // Results stop at maxResults in no set order, so the limit covers every unused symbol in the project.
+         maxResults: 1000,
          cancellationToken: CT);
 
       AssertSuccess(result);
@@ -716,7 +717,8 @@ public class FindUnusedCodeToolTests : TestFixtureTestBase
          projectName: "CoreTestProject",
          includeInternal: true, // Include UnusedInternalClass
          verbosity: ToolResultVerbosity.Full,
-         maxResults: 50,
+         // Results stop at maxResults in no set order, so the limit covers every unused symbol in the project.
+         maxResults: 1000,
          cancellationToken: CT);
 
       AssertSuccess(result);

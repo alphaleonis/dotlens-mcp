@@ -1,5 +1,7 @@
 using DotLens.Tools.Analysis;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
 
 namespace DotLens.Tests.Analysis;
@@ -150,6 +152,138 @@ namespace TestNamespace
          Assert.NotNull(metrics.Loc);
          Assert.Null(metrics.Parameters); // Not requested
          Assert.Null(metrics.Cognitive);  // Not requested
+      }
+      finally
+      {
+         workspace.Dispose();
+      }
+   }
+
+   private const string ConditionalCycleCode = """
+      public static class Cycle
+      {
+         public static int Ping(int n) => Pong(n);
+      #if CYCLE
+         public static int Pong(int n) => Ping(n);
+      #else
+         public static int Pong(int n) => n;
+      #endif
+      }
+      """;
+
+   /// <summary>
+   /// One file in two compilations, as in a multi-targeted project, where only one of them closes the cycle.
+   /// </summary>
+   [Fact]
+   public async Task CalculateCognitiveComplexity_FindsCyclesInTheCompilationOfTheMeasuredNode()
+   {
+      var (workspace, document) = TestHelpers.CreateWorkspaceWithCode(ConditionalCycleCode);
+      try
+      {
+         var parseOptions = Assert.IsType<CSharpParseOptions>(document.Project.ParseOptions);
+         var cycleDocument = document.Project
+            .WithParseOptions(parseOptions.WithPreprocessorSymbols("CYCLE"))
+            .GetDocument(document.Id);
+         Assert.NotNull(cycleDocument);
+
+         Assert.Equal(0, await GetPingCognitiveComplexityAsync(document, CancellationToken.None));
+         Assert.Equal(1, await GetPingCognitiveComplexityAsync(cycleDocument, CancellationToken.None));
+         Assert.Equal(0, await GetPingCognitiveComplexityAsync(document, CancellationToken.None));
+      }
+      finally
+      {
+         workspace.Dispose();
+      }
+   }
+
+   [Fact]
+   public async Task CalculateCognitiveComplexity_CanceledBeforeTheCycleSearch_ThrowsAndLaterCallsSucceed()
+   {
+      var (workspace, document) = TestHelpers.CreateWorkspaceWithCode(ConditionalCycleCode);
+      try
+      {
+         var parseOptions = Assert.IsType<CSharpParseOptions>(document.Project.ParseOptions);
+         var cycleDocument = document.Project
+            .WithParseOptions(parseOptions.WithPreprocessorSymbols("CYCLE"))
+            .GetDocument(document.Id);
+         Assert.NotNull(cycleDocument);
+
+         await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => GetPingCognitiveComplexityAsync(cycleDocument, new CancellationToken(canceled: true)));
+         Assert.Equal(1, await GetPingCognitiveComplexityAsync(cycleDocument, CancellationToken.None));
+      }
+      finally
+      {
+         workspace.Dispose();
+      }
+   }
+
+   private static async Task<int> GetPingCognitiveComplexityAsync(Document document, CancellationToken cancellationToken)
+   {
+      var root = await document.GetSyntaxRootAsync(CancellationToken.None);
+      var semanticModel = await document.GetSemanticModelAsync(CancellationToken.None);
+      Assert.NotNull(root);
+      Assert.NotNull(semanticModel);
+      var ping = root.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.Text == "Ping");
+      return AnalysisHelpers.CalculateCognitiveComplexity(ping, semanticModel, cancellationToken);
+   }
+
+   /// <summary>
+   /// Every implicit base() call in code that compiles binds, whatever the accessibility of the constructors involved.
+   /// </summary>
+   [Fact]
+   public async Task GetImplicitBaseConstructorCalls_BindsEachCallTheCompilerBinds()
+   {
+      const string code = """
+         public class A { public A() { } }
+         public class B : A { }
+         public abstract class C : A { }
+         public sealed class D : C { }
+         internal class E : B { }
+         public class F { private F() { } protected F(int x = 0) { } public sealed class G : F { } }
+         public class H : F { }
+         public class I { protected I(int x = 0) { } protected I(params int[] xs) { } }
+         public class J : I { }
+         public class K(int k) : I { public int P => k; }
+         public class L { private protected L() { } }
+         public class M : L { }
+         public abstract class N : L { }
+         public class O : N { }
+         public record P { }
+         public record Q : P { }
+         """;
+      var (workspace, document) = TestHelpers.CreateWorkspaceWithCode(code);
+      try
+      {
+         var compilation = await document.Project.GetCompilationAsync(CancellationToken.None);
+         Assert.NotNull(compilation);
+         Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+         var types = compilation.GlobalNamespace.GetTypeMembers()
+            .SelectMany(t => t.GetTypeMembers().Prepend(t))
+            .Where(t => t.Locations.Any(l => l.IsInSource))
+            .ToList();
+
+         var calls = AnalysisHelpers.GetImplicitBaseConstructorCalls(compilation, types, CancellationToken.None)
+            .Select(call => $"{call.Constructor.ToDisplayString()} -> {call.BaseConstructor.ToDisplayString()}");
+
+         Assert.Equivalent(
+            new[]
+            {
+               "B.B() -> A.A()",
+               "C.C() -> A.A()",
+               "D.D() -> C.C()",
+               "E.E() -> B.B()",
+               "F.G.G() -> F.F()",
+               "H.H() -> F.F(int)",
+               "J.J() -> I.I(int)",
+               "K.K(int) -> I.I(int)",
+               "M.M() -> L.L()",
+               "N.N() -> L.L()",
+               "O.O() -> N.N()",
+               "Q.Q() -> P.P()",
+            },
+            calls,
+            strict: true);
       }
       finally
       {
