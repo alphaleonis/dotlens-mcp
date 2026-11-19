@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using Microsoft.CodeAnalysis.Text;
 using Serilog;
 
@@ -157,7 +158,11 @@ internal static class AnalysisHelpers
          .ToList();
    }
 
-   public static ComplexityMetrics CalculateComplexityMetrics(SyntaxNode node, IEnumerable<MetricType> requestedMetrics)
+   public static ComplexityMetrics CalculateComplexityMetrics(
+      SyntaxNode node,
+      SemanticModel semanticModel,
+      IEnumerable<MetricType> requestedMetrics,
+      CancellationToken cancellationToken)
    {
       int? cyclomatic = null;
       int? nesting = null;
@@ -182,7 +187,7 @@ internal static class AnalysisHelpers
                parameters = CountParameters(node);
                break;
             case MetricType.Cognitive:
-               cognitive = CalculateCognitiveComplexity(node);
+               cognitive = CalculateCognitiveComplexity(node, semanticModel, cancellationToken);
                break;
          }
       }
@@ -268,47 +273,123 @@ internal static class AnalysisHelpers
       return node is MethodDeclarationSyntax method ? method.ParameterList.Parameters.Count : 0;
    }
 
-   public static int CalculateCognitiveComplexity(SyntaxNode node)
+   /// <summary>
+   /// Calculates cognitive complexity as SonarSource's
+   /// <see href="https://www.sonarsource.com/docs/CognitiveComplexity.pdf">Cognitive Complexity white paper</see>
+   /// (version 1.7) defines it.
+   /// </summary>
+   /// <remarks>
+   /// Only direct recursion counts: a cycle through other methods needs a call graph beyond the measured node.
+   /// </remarks>
+   public static int CalculateCognitiveComplexity(SyntaxNode node, SemanticModel semanticModel, CancellationToken cancellationToken)
    {
       int complexity = 0;
       CalculateCognitiveComplexityRecursive(node, 0, ref complexity);
-      return complexity;
+      return complexity + CountDirectlyRecursiveMethods(node, semanticModel, cancellationToken);
    }
 
    private static void CalculateCognitiveComplexityRecursive(SyntaxNode node, int nestingLevel, ref int complexity)
    {
       foreach (var child in node.ChildNodes())
       {
-         int increment = 0;
-         int newNesting = nestingLevel;
-
-         switch (child)
+         var (increment, newNesting) = child switch
          {
-            case IfStatementSyntax:
-            case WhileStatementSyntax:
-            case ForStatementSyntax:
-            case ForEachStatementSyntax:
-            case SwitchStatementSyntax:
-            case CatchClauseSyntax:
-               increment = 1 + nestingLevel;
-               newNesting = nestingLevel + 1;
-               break;
-            case ConditionalExpressionSyntax:
-               increment = 1 + nestingLevel;
-               break;
-            case BinaryExpressionSyntax binary when
-               binary.Kind() == SyntaxKind.LogicalAndExpression ||
-               binary.Kind() == SyntaxKind.LogicalOrExpression:
-               increment = 1;
-               break;
-            case ElseClauseSyntax:
-               increment = 1;
-               break;
-         }
+            // The head if of the chain already raised the nesting level for each else-if and else.
+            IfStatementSyntax { Parent: ElseClauseSyntax } => (1, nestingLevel),
+            ElseClauseSyntax { Statement: IfStatementSyntax } => (0, nestingLevel),
+            ElseClauseSyntax => (1, nestingLevel),
+            IfStatementSyntax or ConditionalExpressionSyntax or SwitchStatementSyntax or SwitchExpressionSyntax
+               or ForStatementSyntax or CommonForEachStatementSyntax or WhileStatementSyntax or DoStatementSyntax
+               or CatchClauseSyntax => (1 + nestingLevel, nestingLevel + 1),
+            AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax => (0, nestingLevel + 1),
+            GotoStatementSyntax or BreakStatementSyntax { Name: not null } or ContinueStatementSyntax { Name: not null }
+               => (1, nestingLevel),
+            BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.LogicalAndExpression) || binary.IsKind(SyntaxKind.LogicalOrExpression)
+               => (StartsLogicalSequence(binary, binary.Left) ? 1 : 0, nestingLevel),
+            BinaryPatternSyntax pattern when pattern.IsKind(SyntaxKind.AndPattern) || pattern.IsKind(SyntaxKind.OrPattern)
+               => (StartsLogicalSequence(pattern, pattern.Left) ? 1 : 0, nestingLevel),
+            _ => (0, nestingLevel)
+         };
 
          complexity += increment;
          CalculateCognitiveComplexityRecursive(child, newNesting, ref complexity);
       }
+   }
+
+   /// <summary>
+   /// Returns whether a logical operator starts a new sequence of like operators, which costs one increment.
+   /// </summary>
+   /// <remarks>
+   /// The operator continues a sequence when its left operand, or the parent whose right operand it is, has the same kind,
+   /// ignoring parentheses, so <c>a &amp;&amp; (b &amp;&amp; c)</c> is one sequence.
+   /// </remarks>
+   private static bool StartsLogicalSequence(SyntaxNode logicalOperator, SyntaxNode left)
+   {
+      var kind = logicalOperator.Kind();
+      if (SkipParentheses(left).IsKind(kind))
+         return false;
+
+      var operand = logicalOperator;
+      while (operand.Parent is ParenthesizedExpressionSyntax or ParenthesizedPatternSyntax)
+         operand = operand.Parent;
+
+      return operand.Parent switch
+      {
+         BinaryExpressionSyntax parent => !(parent.IsKind(kind) && parent.Right == operand),
+         BinaryPatternSyntax parent => !(parent.IsKind(kind) && parent.Right == operand),
+         _ => true
+      };
+   }
+
+   private static SyntaxNode SkipParentheses(SyntaxNode node)
+   {
+      while (true)
+      {
+         switch (node)
+         {
+            case ParenthesizedExpressionSyntax parenthesized:
+               node = parenthesized.Expression;
+               break;
+            case ParenthesizedPatternSyntax parenthesized:
+               node = parenthesized.Pattern;
+               break;
+            default:
+               return node;
+         }
+      }
+   }
+
+   /// <summary>
+   /// Counts the methods declared in the node, the node itself and its local functions, that call themselves.
+   /// </summary>
+   private static int CountDirectlyRecursiveMethods(SyntaxNode node, SemanticModel semanticModel, CancellationToken cancellationToken)
+   {
+      return node.DescendantNodesAndSelf()
+         .Where(n => n.IsCallableMethodSyntax())
+         .Count(declaration =>
+            semanticModel.GetDeclaredSymbol(declaration, cancellationToken) is IMethodSymbol method
+            && semanticModel.GetOperation(declaration, cancellationToken) is { } body
+            && body.Descendants().Any(operation => GetCalledMethod(operation) is { } called && IsSameMethod(called, method)));
+   }
+
+   private static IMethodSymbol? GetCalledMethod(IOperation operation) => operation switch
+   {
+      IInvocationOperation invocation => invocation.TargetMethod,
+      IObjectCreationOperation creation => creation.Constructor,
+      IBinaryOperation binary => binary.OperatorMethod,
+      IUnaryOperation unary => unary.OperatorMethod,
+      IConversionOperation conversion => conversion.OperatorMethod,
+      ICompoundAssignmentOperation compoundAssignment => compoundAssignment.OperatorMethod,
+      IIncrementOrDecrementOperation incrementOrDecrement => incrementOrDecrement.OperatorMethod,
+      _ => null
+   };
+
+   // A call names the defining part of a partial method, while the declaration with the body has the implementation part.
+   private static bool IsSameMethod(IMethodSymbol called, IMethodSymbol method)
+   {
+      var definition = called.OriginalDefinition;
+      return SymbolEqualityComparer.Default.Equals(definition, method)
+         || SymbolEqualityComparer.Default.Equals(definition.PartialImplementationPart, method);
    }
 
    public static List<string> DetectCycles(Dictionary<string, List<string>> graph)

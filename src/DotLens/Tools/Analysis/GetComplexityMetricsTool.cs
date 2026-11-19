@@ -143,7 +143,7 @@ public class GetComplexityMetricsTool
       ToolResultVerbosity verbosity,
       CancellationToken cancellationToken)
    {
-      _workspaceManager.EnsureSolutionLoaded();
+      var solution = _workspaceManager.EnsureSolutionLoaded();
 
       var lookupResult = await _symbolLookup.FindSingleAsync<IMethodSymbol>(
          target,
@@ -167,7 +167,11 @@ public class GetComplexityMetricsTool
       }
 
       var methodSyntax = await syntaxRef.GetSyntaxAsync(cancellationToken);
-      var methodMetrics = CalculateMetrics(methodSyntax, requestedMetrics);
+      var document = solution.GetDocument(syntaxRef.SyntaxTree)
+         ?? throw new ToolException(ErrorCodes.FileNotInSolution, "Could not find document for method");
+      var semanticModel = await document.GetSemanticModelAsync(cancellationToken)
+         ?? throw new ToolException(ErrorCodes.AnalysisFailed, "Could not get semantic model");
+      var methodMetrics = CalculateMetrics(methodSyntax, semanticModel, requestedMetrics, cancellationToken);
 
       // Include location for Full verbosity
       SymbolLocation? location = null;
@@ -217,7 +221,7 @@ public class GetComplexityMetricsTool
          .Select(node =>
          {
             var symbol = semanticModel.GetDeclaredSymbol(node) as IMethodSymbol;
-            var methodMetrics = CalculateMetrics(node, requestedMetrics);
+            var methodMetrics = CalculateMetrics(node, semanticModel, requestedMetrics, cancellationToken);
 
             // Get name from symbol, or fallback to extracting from syntax
             var name = symbol?.Name ?? GetMethodName(node);
@@ -279,8 +283,12 @@ public class GetComplexityMetricsTool
          returnedCount: methodsToReturn.Count);
    }
 
-   private static ComplexityMetrics CalculateMetrics(SyntaxNode node, List<MetricType> requestedMetrics)
-      => AnalysisHelpers.CalculateComplexityMetrics(node, requestedMetrics);
+   private static ComplexityMetrics CalculateMetrics(
+      SyntaxNode node,
+      SemanticModel semanticModel,
+      List<MetricType> requestedMetrics,
+      CancellationToken cancellationToken)
+      => AnalysisHelpers.CalculateComplexityMetrics(node, semanticModel, requestedMetrics, cancellationToken);
 
    private static FileComplexityTotals CalculateFileTotals(List<MethodMetrics> methods, List<MetricType> requestedMetrics)
    {

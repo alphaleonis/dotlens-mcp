@@ -139,9 +139,11 @@ namespace TestNamespace
       {
          var root = await document.GetSyntaxRootAsync();
          Assert.NotNull(root);
+         var semanticModel = await document.GetSemanticModelAsync();
+         Assert.NotNull(semanticModel);
 
          var metrics = AnalysisHelpers.CalculateComplexityMetrics(
-            root!, new List<MetricType> { MetricType.Cyclomatic, MetricType.Nesting, MetricType.Loc });
+            root!, semanticModel, new List<MetricType> { MetricType.Cyclomatic, MetricType.Nesting, MetricType.Loc }, CancellationToken.None);
 
          Assert.NotNull(metrics.Cyclomatic);
          Assert.NotNull(metrics.Nesting);

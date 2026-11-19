@@ -520,6 +520,24 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       AssertControlFlow(outerLoop.Data, region: (26, 36), exitPoints: [], returnStatements: [], endPointIsReachable: true);
    }
 
+   [Fact]
+   public async Task ComplexityMetrics_LabeledBreakAndContinueAddFundamentalIncrement()
+   {
+      var tool = new GetComplexityMetricsTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetComplexityMetricsAsync(
+         new ComplexityTargetFile { FilePath = _fixture.GetPath("LabeledLoops.cs") },
+         metrics: [MetricType.Cognitive],
+         cancellationToken: CT);
+
+      // Each method nests an if in two loops (1 + 2 + 3), and its labeled jump adds 1.
+      var data = Assert.IsType<FileComplexityResponse>(result.Data);
+      Assert.NotNull(data.Methods);
+      Assert.Equal<(string, int?)>(
+         [("CountRowsBeforeNegative", 7), ("CountRowsWithoutZero", 7), ("FindNegativeRow", 7)],
+         data.Methods.Select(m => (m.Name, m.Metrics.Cognitive)));
+   }
+
    private static void AssertControlFlow(
       ControlFlowResponse data,
       (int Start, int End) region,
