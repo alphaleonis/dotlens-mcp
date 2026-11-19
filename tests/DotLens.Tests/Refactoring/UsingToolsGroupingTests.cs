@@ -529,7 +529,10 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
    private async Task AssertRoslynOrdersPairsAlikeAsync(string path, string written)
    {
       var document = await WorkspaceManager.GetDocumentAsync(path, CT);
-      var usings = written.Split('\n').Where(l => l.StartsWith("using ", StringComparison.Ordinal)).ToList();
+      var usings = SourceText.From(written).Lines
+         .Select(l => l.ToString())
+         .Where(l => l.StartsWith("using ", StringComparison.Ordinal))
+         .ToList();
       Assert.NotEmpty(usings);
       var comparedPairs = 0;
       for (var i = 0; i < usings.Count; i++)

@@ -39,6 +39,10 @@ namespace DotLens.Tools.Shared;
 /// Imports does when it sorts. A line that holds only whitespace stays. When the options separate groups, a blank line
 /// goes above each using that starts a group and has no line break in its leading trivia, as Roslyn puts it there.
 /// </para>
+/// <para>
+/// Each line break that the methods add is the one that GetListNewLine returns for the list. Every other line break
+/// stays with the entry whose trailing trivia holds it, so a sorted entry takes its line break along, as Roslyn's does.
+/// </para>
 /// </remarks>
 internal static class UsingDirectiveLayout
 {
@@ -134,16 +138,18 @@ internal static class UsingDirectiveLayout
          var usingRuns = SplitRuns(GetUsings(container), IsKept);
          var split = IsSplit(externRuns, usingRuns);
          var keepBlankLines = KeepsBlankLines(split, externRuns, usingRuns, usingList.Order);
+         var newLine = GetListNewLine(
+            GetExterns(container).Concat<SyntaxNode>(GetUsings(container).Where(IsKept)), options.NewLine);
          if (GetExterns(container).Count > 0)
          {
-            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, sort: !split, options.NewLine);
+            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, sort: !split, newLine);
             container = marked.GetAnnotatedNodes(marker).Single();
          }
 
          if (GetUsings(container).Count > 0)
          {
             var runs = SplitRuns(GetUsings(container), IsKept);
-            marked = Place(marked, container, usingList, runs, keepBlankLines, sort: !split, options.NewLine);
+            marked = Place(marked, container, usingList, runs, keepBlankLines, sort: !split, newLine);
          }
       }
 
@@ -165,7 +171,10 @@ internal static class UsingDirectiveLayout
    /// run that is in order, and to the end of any other run, as Roslyn adds a using to a list it does not sort.
    /// </para>
    /// </remarks>
-   /// <param name="newUsing">The using to add, without leading trivia. It takes the indentation of the first using.</param>
+   /// <param name="newUsing">
+   /// The using to add, without trivia. It takes the indentation of the first using and the line break that
+   /// <see cref="GetListNewLine"/> returns for the list.
+   /// </param>
    /// <exception cref="ToolException">A #define or #undef inside an #if block follows the place for the new using.</exception>
    public static CompilationUnitSyntax Add(
       CompilationUnitSyntax unit,
@@ -179,7 +188,10 @@ internal static class UsingDirectiveLayout
       var usingList = UsingList(options);
       var usings = GetUsings(container);
       var codeRegions = regions.EnclosingCode(container, usings[^1].GetLastToken().GetNextToken(includeZeroWidth: true));
-      var indented = newUsing.WithLeadingTrivia(GetIndentation(usings[0].GetLeadingTrivia()));
+      var newLine = GetListNewLine(GetExterns(container).Concat<SyntaxNode>(usings), options.NewLine);
+      var indented = newUsing
+         .WithLeadingTrivia(GetIndentation(usings[0].GetLeadingTrivia()))
+         .WithTrailingTrivia(SyntaxFactory.EndOfLine(newLine));
       var runs = SplitRuns(usings, _ => true);
       var externRuns = SplitRuns(GetExterns(container), _ => true);
       var split = IsSplit(externRuns, runs);
@@ -201,7 +213,7 @@ internal static class UsingDirectiveLayout
          runs.Insert(0, new Run<UsingDirectiveSyntax>(header, [(indented, -1)], runs[0].Start));
       }
 
-      return Place(unit, container, usingList, runs, keepBlankLines, sort: !split, options.NewLine);
+      return Place(unit, container, usingList, runs, keepBlankLines, sort: !split, newLine);
    }
 
    /// <summary>
@@ -286,6 +298,7 @@ internal static class UsingDirectiveLayout
    /// </summary>
    /// <param name="keepBlankLines">Whether the entries keep the blank lines above them.</param>
    /// <param name="sort">Whether to sort the entries of each run, or to keep them in the order the run holds them.</param>
+   /// <param name="newLine">The line break of each line that the method adds, from <see cref="GetListNewLine"/>.</param>
    private static CompilationUnitSyntax Place<T>(
       CompilationUnitSyntax root,
       SyntaxNode container,
@@ -390,7 +403,7 @@ internal static class UsingDirectiveLayout
       UsingLayoutOptions options,
       ConditionalRegions regions)
    {
-      var newLine = options.NewLine;
+      var newLine = GetListNewLine(unit.Externs, options.NewLine);
       var next = unit.Externs.Count > 0
          ? unit.Externs[^1].GetLastToken().GetNextToken(includeZeroWidth: true)
          : unit.GetFirstToken(includeZeroWidth: true);
@@ -400,7 +413,7 @@ internal static class UsingDirectiveLayout
       var nextTrivia = SyntaxFactory.TriviaList(next.LeadingTrivia.Skip(headerLength));
       EnsureNoSymbolDirective(nextTrivia);
 
-      var placed = newUsing.WithLeadingTrivia(header.AddRange(newUsing.GetLeadingTrivia()));
+      var placed = newUsing.WithLeadingTrivia(header).WithTrailingTrivia(SyntaxFactory.EndOfLine(newLine));
       if (options.SeparateGroups && unit.Externs.Count > 0)
          placed = placed.WithLeadingTrivia(SeparateGroup(placed.GetLeadingTrivia(), newLine));
       if (!next.IsKind(SyntaxKind.EndOfFileToken) || nextTrivia.Any(t => !IsBlank(t)))
@@ -436,6 +449,23 @@ internal static class UsingDirectiveLayout
             "Add the using with edit_file at the place it belongs");
       }
    }
+
+   /// <summary>
+   /// Returns the line break that Roslyn's Organize Imports adds to a list: the first one that ends an entry, as
+   /// https://github.com/dotnet/roslyn/blob/c6e86165cb14cec562b68124c6cef927a4fc8fb7/src/Workspaces/SharedUtilitiesAndExtensions/Compiler/CSharp/Utilities/UsingsAndExternAliasesOrganizer.cs#L27-L31
+   /// shows. UsingToolsListLineBreakTests pins it.
+   /// </summary>
+   /// <remarks>
+   /// When no entry ends with a line break, Roslyn takes the one of its formatting options, and these methods take the
+   /// document's.
+   /// </remarks>
+   /// <param name="entries">The extern aliases and usings of a container that remain, in the order of the file.</param>
+   /// <returns>The line break, or <paramref name="fallback"/> when no entry ends with one.</returns>
+   private static string GetListNewLine(IEnumerable<SyntaxNode> entries, string fallback) =>
+      entries.SelectMany(e => e.GetTrailingTrivia())
+         .Where(t => t.IsKind(SyntaxKind.EndOfLineTrivia))
+         .Select(t => t.ToFullString())
+         .FirstOrDefault() ?? fallback;
 
    /// <summary>
    /// Returns the leading trivia of an entry that starts a group, with a line break in front when it holds none.
@@ -943,7 +973,7 @@ internal static class UsingDirectiveLayout
 /// The layout of the usings of one document.
 /// </summary>
 /// <param name="NewLine">
-/// The line break of an added blank line, and of a using whose line it shared with what no longer follows it.
+/// The line break of the document: the one that ends its first line, or its formatting option when it has one line.
 /// </param>
 /// <param name="SystemFirst">Whether usings of System and its namespaces sort before the others.</param>
 /// <param name="SeparateGroups">Whether a blank line separates groups of usings.</param>

@@ -119,9 +119,7 @@ public class AddUsingTool
             "Add the using with edit_file at the place it belongs");
       }
 
-      var newUsing = SyntaxFactory.UsingDirective(
-            SyntaxFactory.ParseName(name).WithLeadingTrivia(SyntaxFactory.Space))
-         .WithTrailingTrivia(SyntaxFactory.EndOfLine(options.NewLine));
+      var newUsing = SyntaxFactory.UsingDirective(SyntaxFactory.ParseName(name).WithLeadingTrivia(SyntaxFactory.Space));
 
       var newRoot = UsingDirectiveLayout.Add(compilationUnit, newUsing, options);
       var newText = newRoot.ToFullString();

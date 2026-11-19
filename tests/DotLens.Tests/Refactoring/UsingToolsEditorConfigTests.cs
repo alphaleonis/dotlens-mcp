@@ -892,10 +892,10 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
 
    public static TheoryData<bool, bool, string> AddToMixedKindsCases => new()
    {
-      { true, false, SystemFirst.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
-      { true, true, SystemFirstSeparated.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
-      { false, false, Alphabetical.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
-      { false, true, AlphabeticalSeparated.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
+      { true, false, Lf(SystemFirst).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
+      { true, true, Lf(SystemFirstSeparated).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
+      { false, false, Lf(Alphabetical).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
+      { false, true, Lf(AlphabeticalSeparated).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
    };
 
    [Theory]
@@ -915,10 +915,10 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
    /// </summary>
    public static TheoryData<bool, bool, string> AddToSeparatedCases => new()
    {
-      { true, false, SystemFirstSeparated.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
-      { true, true, SystemFirstSeparated.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
-      { false, false, Alphabetical.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
-      { false, true, AlphabeticalSeparated.Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
+      { true, false, Lf(SystemFirstSeparated).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
+      { true, true, Lf(SystemFirstSeparated).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
+      { false, false, Lf(Alphabetical).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\nusing Beta;\n") },
+      { false, true, Lf(AlphabeticalSeparated).Replace("using Alpha.Inner;\n", "using Alpha.Inner;\n\nusing Beta;\n") },
    };
 
    [Theory]
@@ -1232,7 +1232,13 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
       """;
 
    private static string Indent(string lines) =>
-      string.Join("\n", lines.Split('\n').Select(l => l.Length == 0 ? l : "   " + l));
+      string.Join("\n", Lf(lines).Split('\n').Select(l => l.Length == 0 ? l : "   " + l));
+
+   /// <summary>
+   /// Returns the text with \n line breaks. The cases join \n literals and raw strings, whose line breaks follow the
+   /// checkout, so each case runs with \n alone. UsingToolsListLineBreakTests covers files with other line breaks.
+   /// </summary>
+   private static string Lf(string text) => text.ReplaceLineEndings("\n");
 
    private static string EditorConfigText(string sortSystemFirst, string separateGroups) => $"""
       root = true
@@ -1263,6 +1269,8 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
 
    private async Task AssertOrganizeUsingsAsync(string source, string expected)
    {
+      source = Lf(source);
+      expected = Lf(expected);
       var path = await WriteSourceAsync(TargetPath, source);
       var document = await WorkspaceManager.GetDocumentAsync(path, CT);
       var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
@@ -1281,6 +1289,8 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
 
    private async Task AssertAddUsingAsync(string @namespace, string source, string expected)
    {
+      source = Lf(source);
+      expected = Lf(expected);
       var path = await WriteSourceAsync(TargetPath, source);
 
       var result = await new AddUsingTool(WorkspaceManager).AddUsingAsync(path, @namespace, preview: false, CT);
