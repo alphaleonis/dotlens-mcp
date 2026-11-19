@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- The friend assembly is outside the solution, so only its own code could reach the internal members. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExternalConsumer" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="xunit.v3.extensibility.core" Version="4.0.3" />
+    <ProjectReference Include="../UnusedCodeTestedLibrary/UnusedCodeTestedLibrary.csproj" />
+  </ItemGroup>
+
+</Project>

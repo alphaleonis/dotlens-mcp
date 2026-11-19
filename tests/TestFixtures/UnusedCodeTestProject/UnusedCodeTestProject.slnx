@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="UnusedCodeTestProject.csproj" />
+  <Project Path="../UnusedCodeFriendLibrary/UnusedCodeFriendLibrary.csproj" />
+  <Project Path="../UnusedCodeTestedLibrary/UnusedCodeTestedLibrary.csproj" />
+</Solution>
