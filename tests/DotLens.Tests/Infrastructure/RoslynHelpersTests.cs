@@ -1,6 +1,7 @@
 using DotLens.Infrastructure;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace DotLens.Tests.Infrastructure;
@@ -207,7 +208,7 @@ public class Derived : Base { }";
    [InlineData("Reimplementing", "public class Reimplementing : Base, IShape")]
    [InlineData("Inheriting", "public class Inheriting : Base")]
    [InlineData("Square", "public sealed class Square : IShape")]
-   public void GetDeclaration_CompiledType_ListsReimplementedInterfaces(string typeName, string expected)
+   public async Task GetDeclaration_CompiledType_ListsReimplementedInterfaces(string typeName, string expected)
    {
       var library = CSharpCompilation.Create(
          "CompiledShapes",
@@ -227,7 +228,8 @@ public class Derived : Base { }";
       var consumer = CSharpCompilation.Create("Consumer", references: [.. TestHelpers.CoreReferences, MetadataReference.CreateFromImage(image.ToArray())]);
       var type = consumer.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the reference");
 
-      Assert.Equal(expected, RoslynHelpers.GetDeclaration(type));
+      using var workspace = new AdhocWorkspace();
+      Assert.Equal(expected, await RoslynHelpers.GetDeclarationAsync(type, workspace.CurrentSolution, TestContext.Current.CancellationToken));
    }
 
    /// <summary>
@@ -272,7 +274,7 @@ public class Derived : Base { }";
    [InlineData("Tagged", "public record Tagged : IEquatable<string>")]
    [InlineData("Declared", "public record Declared")]
    [InlineData("Pair", "public struct Pair : IEquatable<Pair>")]
-   public void FullDeclaration_RecordEquatable_MetadataRecord(string typeName, string expected)
+   public async Task FullDeclaration_RecordEquatable_MetadataRecord(string typeName, string expected)
    {
       var reference = EmitLibrary("CompiledRecords", """
          using System;
@@ -285,44 +287,91 @@ public class Derived : Base { }";
       var consumer = CSharpCompilation.Create("Consumer", references: [.. TestHelpers.CoreReferences, reference]);
       var type = consumer.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the reference");
 
-      Assert.Equal(expected, RoslynHelpers.GetDeclaration(type));
+      using var workspace = new AdhocWorkspace();
+      Assert.Equal(expected, await RoslynHelpers.GetDeclarationAsync(type, workspace.CurrentSolution, TestContext.Current.CancellationToken));
    }
 
    /// <summary>
-   /// Partial records seen through a compilation whose core library differs, so the compilation retargets their symbols
-   /// and the IEquatable of each record shows whether or not a part wrote it.
+   /// Partial records of one project seen through a referencing project whose core library differs, so the referencing
+   /// compilation retargets their symbols.
    /// </summary>
    [Theory]
    [InlineData("Written", "public record Written(int X) : IEquatable<Written>, IDisposable")]
-   [InlineData("Other", "public record Other(int X) : IEquatable<string>, IDisposable, IEquatable<Other>")]
-   [InlineData("Unwritten", "public record Unwritten(int X) : IDisposable, IComparable<Unwritten>, IEquatable<Unwritten>")]
-   [InlineData("Derived", "public record Derived(int X) : Written(X), IDisposable, IEquatable<Derived>")]
-   public void FullDeclaration_RecordEquatable_RetargetedRecord(string typeName, string expected)
+   [InlineData("Other", "public record Other(int X) : IEquatable<string>, IDisposable")]
+   [InlineData("Unwritten", "public record Unwritten(int X) : IDisposable, IComparable<Unwritten>")]
+   [InlineData("Derived", "public record Derived(int X) : Written(X), IDisposable")]
+   public async Task FullDeclaration_RecordEquatable_RetargetedRecord(string typeName, string expected)
    {
-      var declaring = CSharpCompilation.Create(
-         "DeclaringRecords",
-         [
-            CSharpSyntaxTree.ParseText("""
-               using System;
-               public partial record Written(int X) : IEquatable<Written>;
-               public partial record Written : IDisposable { public void Dispose() { } }
-               public partial record Other(int X) : IEquatable<string> { public bool Equals(string? other) => false; }
-               public partial record Other : IDisposable { public void Dispose() { } }
-               public partial record Unwritten(int X) : IDisposable { public void Dispose() { } }
-               public partial record Unwritten : IComparable<Unwritten> { public int CompareTo(Unwritten? other) => 0; }
-               public partial record Derived(int X) : Written(X);
-               public partial record Derived : IDisposable { public new void Dispose() { } }
-               """, cancellationToken: TestContext.Current.CancellationToken),
-         ],
-         ReferencePackReferences(),
-         new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-      Assert.Empty(declaring.GetDiagnostics(TestContext.Current.CancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error));
-      var referencing = CSharpCompilation.Create("Referencing", references: [.. TestHelpers.CoreReferences, declaring.ToMetadataReference()]);
+      var cancellationToken = TestContext.Current.CancellationToken;
+      using var workspace = new AdhocWorkspace();
+      var declaringId = ProjectId.CreateNewId();
+      var referencingId = ProjectId.CreateNewId();
+      var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable);
+      var solution = workspace.CurrentSolution
+         .AddProject(ProjectInfo.Create(declaringId, VersionStamp.Create(), "DeclaringRecords", "DeclaringRecords", LanguageNames.CSharp,
+            compilationOptions: options, metadataReferences: ReferencePackReferences()))
+         .AddDocument(DocumentId.CreateNewId(declaringId), "Records.cs", """
+            using System;
+            public partial record Written(int X) : IEquatable<Written>;
+            public partial record Written : IDisposable { public void Dispose() { } }
+            public partial record Other(int X) : IEquatable<string> { public bool Equals(string? other) => false; }
+            public partial record Other : IDisposable { public void Dispose() { } }
+            public partial record Unwritten(int X) : IDisposable { public void Dispose() { } }
+            public partial record Unwritten : IComparable<Unwritten> { public int CompareTo(Unwritten? other) => 0; }
+            public partial record Derived(int X) : Written(X);
+            public partial record Derived : IDisposable { public new void Dispose() { } }
+            """)
+         .AddProject(ProjectInfo.Create(referencingId, VersionStamp.Create(), "Referencing", "Referencing", LanguageNames.CSharp,
+            compilationOptions: options, metadataReferences: TestHelpers.CoreReferences, projectReferences: [new ProjectReference(declaringId)]));
+      var declaring = await GetCompilationAsync(solution, declaringId, cancellationToken);
+      Assert.Empty(declaring.GetDiagnostics(cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error));
+      var referencing = await GetCompilationAsync(solution, referencingId, cancellationToken);
       var type = referencing.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the reference");
       Assert.False(type.ContainingAssembly is ISourceAssemblySymbol, "The referencing compilation retargets the record");
       Assert.Equal(2, type.DeclaringSyntaxReferences.Length);
 
-      Assert.Equal(expected, RoslynHelpers.GetDeclaration(type));
+      Assert.Equal(expected, await RoslynHelpers.GetDeclarationAsync(type, solution, cancellationToken));
+   }
+
+   /// <summary>
+   /// A partial record in a file that two projects link, seen through a project that references the second of them, so
+   /// the declaration binds in the project that holds the record's own syntax trees.
+   /// </summary>
+   [Fact]
+   public async Task FullDeclaration_RecordEquatable_RetargetedLinkedRecord()
+   {
+      var cancellationToken = TestContext.Current.CancellationToken;
+      using var workspace = new AdhocWorkspace();
+      var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable);
+      var filePath = Path.Combine(Path.GetTempPath(), "RoslynHelpersTests", "Records.cs");
+      var source = SourceText.From("""
+         using System;
+         public partial record Unwritten(int X) : IDisposable { public void Dispose() { } }
+         public partial record Unwritten : IComparable<Unwritten> { public int CompareTo(Unwritten? other) => 0; }
+         """);
+      var solution = workspace.CurrentSolution;
+      var linkedIds = new List<ProjectId>();
+      foreach (var name in new[] { "LinkedFirst", "LinkedSecond" })
+      {
+         var id = ProjectId.CreateNewId();
+         linkedIds.Add(id);
+         solution = solution
+            .AddProject(ProjectInfo.Create(id, VersionStamp.Create(), name, name, LanguageNames.CSharp,
+               compilationOptions: options, metadataReferences: ReferencePackReferences()))
+            .AddDocument(DocumentId.CreateNewId(id), "Records.cs", source, filePath: filePath);
+      }
+      var referencingId = ProjectId.CreateNewId();
+      solution = solution.AddProject(ProjectInfo.Create(referencingId, VersionStamp.Create(), "Referencing", "Referencing", LanguageNames.CSharp,
+         compilationOptions: options, metadataReferences: TestHelpers.CoreReferences, projectReferences: [new ProjectReference(linkedIds[1])]));
+      var referencing = await GetCompilationAsync(solution, referencingId, cancellationToken);
+      var type = referencing.GetTypeByMetadataName("Unwritten") ?? throw new InvalidOperationException("Unwritten is not in the reference");
+      Assert.False(type.ContainingAssembly is ISourceAssemblySymbol, "The referencing compilation retargets the record");
+      Assert.Equal("LinkedSecond", type.ContainingAssembly.Name);
+      Assert.Equal("LinkedSecond", solution.GetDocument(type.DeclaringSyntaxReferences[0].SyntaxTree)?.Project.Name);
+
+      Assert.Equal(
+         "public record Unwritten(int X) : IDisposable, IComparable<Unwritten>",
+         await RoslynHelpers.GetDeclarationAsync(type, solution, cancellationToken));
    }
 
    /// <summary>
@@ -357,6 +406,12 @@ public class Derived : Base { }";
          .SelectMany(pack => Directory.EnumerateDirectories(Path.Combine(pack.Directory, "ref")))
          .First(directory => File.Exists(Path.Combine(directory, "System.Runtime.dll")));
       return [.. Directory.EnumerateFiles(packDirectory, "*.dll").Select(path => MetadataReference.CreateFromFile(path))];
+   }
+
+   private static async Task<Compilation> GetCompilationAsync(Solution solution, ProjectId projectId, CancellationToken cancellationToken)
+   {
+      var project = solution.GetProject(projectId) ?? throw new InvalidOperationException($"{projectId} is not in the solution");
+      return await project.GetCompilationAsync(cancellationToken) ?? throw new InvalidOperationException($"{project.Name} has no compilation");
    }
 
    private static MetadataReference EmitLibrary(string assemblyName, string source)

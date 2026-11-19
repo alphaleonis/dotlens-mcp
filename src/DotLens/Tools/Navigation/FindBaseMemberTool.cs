@@ -80,7 +80,7 @@ public class FindBaseMemberTool
       var explicitInterfaceImpls = symbol.GetExplicitInterfaceImplementations();
 
       SymbolResponse? overriddenMember = overridden != null
-         ? CreateSymbolResponse(overridden, verbosity)
+         ? await CreateSymbolResponseAsync(overridden, solution, verbosity, cancellationToken)
          : null;
 
       var explicitImplementations = new List<SymbolResponse>();
@@ -91,7 +91,7 @@ public class FindBaseMemberTool
          // Collect explicit interface implementations
          foreach (var impl in explicitInterfaceImpls)
          {
-            explicitImplementations.Add(CreateSymbolResponse(impl, verbosity));
+            explicitImplementations.Add(await CreateSymbolResponseAsync(impl, solution, verbosity, cancellationToken));
          }
 
          // Find implicit interface implementations
@@ -104,7 +104,7 @@ public class FindBaseMemberTool
                if (explicitInterfaceImpls.Contains(impl, SymbolEqualityComparer.Default))
                   continue;
 
-               implicitImplementations.Add(CreateSymbolResponse(impl, verbosity));
+               implicitImplementations.Add(await CreateSymbolResponseAsync(impl, solution, verbosity, cancellationToken));
             }
          }
       }
@@ -126,7 +126,7 @@ public class FindBaseMemberTool
          return ToolResult.Create(
             new FindBaseMemberResponse
             {
-               Member = CreateSymbolResponse(symbol, verbosity),
+               Member = await CreateSymbolResponseAsync(symbol, solution, verbosity, cancellationToken),
                Message = $"This {memberKind.ToString().ToLowerInvariant()} does not override or implement any base member",
                ExplicitInterfaceCount = 0,
                ImplicitInterfaceCount = 0
@@ -148,7 +148,7 @@ public class FindBaseMemberTool
       return ToolResult.Create(
          new FindBaseMemberResponse
          {
-            Member = CreateSymbolResponse(symbol, verbosity),
+            Member = await CreateSymbolResponseAsync(symbol, solution, verbosity, cancellationToken),
             OverriddenMember = overriddenMember,
             ExplicitInterfaceImplementations = verbosity == ToolResultVerbosity.Summary ? null : explicitImplementations,
             ImplicitInterfaceImplementations = verbosity == ToolResultVerbosity.Summary ? null : implicitImplementations,
@@ -158,9 +158,11 @@ public class FindBaseMemberTool
          suggestedNextTools: suggestions.ToArray());
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 
    private static async Task<int> CountImplicitImplementationsAsync(ISymbol symbol, Solution solution, CancellationToken cancellationToken)

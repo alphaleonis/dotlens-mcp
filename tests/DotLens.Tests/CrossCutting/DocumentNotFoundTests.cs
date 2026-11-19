@@ -215,7 +215,7 @@ public class DocumentNotFoundTests : MockableRoslynServiceTestBase
    public async Task GetFileOverview_DocumentNotFound_ThrowsException()
    {
       await AssertThrowsToolExceptionAsync(
-         () => _getFileOverview.GetFileOverviewAsync(NonExistentFile, ct: CT),
+         () => _getFileOverview.GetFileOverviewAsync(NonExistentFile, cancellationToken: CT),
          ErrorCodes.FileNotInSolution);
    }
 

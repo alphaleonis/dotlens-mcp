@@ -70,7 +70,7 @@ public class FindImplementationsTool
       {
          foreach (var impl in allImplementations.Take(maxResults))
          {
-            implementationResponses.Add(CreateSymbolResponse(impl, verbosity));
+            implementationResponses.Add(await CreateSymbolResponseAsync(impl, solution, verbosity, cancellationToken));
          }
       }
 
@@ -87,7 +87,7 @@ public class FindImplementationsTool
       return ToolResult.Create(
          new FindImplementationsResponse
          {
-            BaseType = CreateSymbolResponse(typeSymbol, verbosity),
+            BaseType = await CreateSymbolResponseAsync(typeSymbol, solution, verbosity, cancellationToken),
             TotalImplementations = totalImplementations,
             Implementations = verbosity == ToolResultVerbosity.Summary ? null : implementationResponses
          },
@@ -96,8 +96,10 @@ public class FindImplementationsTool
          returnedCount: implementationResponses.Count);
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }

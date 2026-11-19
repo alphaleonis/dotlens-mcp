@@ -100,7 +100,7 @@ public class FindCallersTool
 
                callerList.Add(new CallerInfo
                {
-                  CallingSymbol = CreateSymbolResponse(callingSymbol, verbosity),
+                  CallingSymbol = await CreateSymbolResponseAsync(callingSymbol, solution, verbosity, cancellationToken),
                   Location = new CallerLocationInfo
                   {
                      FilePath = _workspace.FormatPath(callerDocument.FilePath),
@@ -131,7 +131,7 @@ public class FindCallersTool
       return ToolResult.Create(
          new FindCallersResponse
          {
-            Symbol = CreateSymbolResponse(symbol, verbosity),
+            Symbol = await CreateSymbolResponseAsync(symbol, solution, verbosity, cancellationToken),
             TotalCallers = totalCallers,
             Callers = verbosity == ToolResultVerbosity.Summary ? null : callerList
          },
@@ -140,8 +140,10 @@ public class FindCallersTool
          returnedCount: callerList.Count);
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }

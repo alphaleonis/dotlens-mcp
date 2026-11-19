@@ -20,7 +20,7 @@ public class GetFileOverviewToolTests : TestFixtureTestBase
    public async Task GetFileOverview_ReturnsComprehensiveInfo()
    {
       var filePath = GetCoreTestProjectPath("Types/Classes.cs");
-      var result = await _tool.GetFileOverviewAsync(filePath, ct: CT);
+      var result = await _tool.GetFileOverviewAsync(filePath, cancellationToken: CT);
 
       AssertSuccess(result);
       var data = GetData(result);
@@ -50,7 +50,7 @@ public class GetFileOverviewToolTests : TestFixtureTestBase
    public async Task GetFileOverview_WithAsyncFile_ReturnsAsyncInfo()
    {
       var filePath = GetCoreTestProjectPath("Patterns/AsyncPatterns.cs");
-      var result = await _tool.GetFileOverviewAsync(filePath, ct: CT);
+      var result = await _tool.GetFileOverviewAsync(filePath, cancellationToken: CT);
 
       AssertSuccess(result);
       var data = GetData(result);
@@ -79,7 +79,7 @@ public class GetFileOverviewToolTests : TestFixtureTestBase
    public async Task GetFileOverview_IncludesDiagnosticsSummary()
    {
       var filePath = GetCoreTestProjectPath("Types/Classes.cs");
-      var result = await _tool.GetFileOverviewAsync(filePath, ct: CT);
+      var result = await _tool.GetFileOverviewAsync(filePath, cancellationToken: CT);
 
       AssertSuccess(result);
       var data = GetData(result);
@@ -94,7 +94,7 @@ public class GetFileOverviewToolTests : TestFixtureTestBase
    public async Task GetFileOverview_FileNotFound_ThrowsToolException()
    {
       var ex = await Assert.ThrowsAsync<ToolException>(() =>
-         _tool.GetFileOverviewAsync("NonExistent/file.cs", ct: CT));
+         _tool.GetFileOverviewAsync("NonExistent/file.cs", cancellationToken: CT));
 
       Assert.Equal(ErrorCodes.FileNotInSolution, ex.Code);
    }

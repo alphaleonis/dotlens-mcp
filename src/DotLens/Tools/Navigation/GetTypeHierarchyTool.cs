@@ -79,7 +79,7 @@ public class GetTypeHierarchyTool
          baseTypeCount++;
          if (verbosity != ToolResultVerbosity.Summary)
          {
-            baseTypes.Add(CreateSymbolResponse(currentBase, verbosity));
+            baseTypes.Add(await CreateSymbolResponseAsync(currentBase, solution, verbosity, cancellationToken));
          }
          currentBase = currentBase.BaseType;
       }
@@ -91,7 +91,7 @@ public class GetTypeHierarchyTool
       {
          foreach (var iface in typeSymbol.AllInterfaces)
          {
-            interfaces.Add(CreateSymbolResponse(iface, verbosity));
+            interfaces.Add(await CreateSymbolResponseAsync(iface, solution, verbosity, cancellationToken));
          }
       }
 
@@ -120,7 +120,7 @@ public class GetTypeHierarchyTool
          {
             foreach (var derived in allDerived.Take(maxDerivedTypes))
             {
-               derivedTypes.Add(CreateSymbolResponse(derived, verbosity));
+               derivedTypes.Add(await CreateSymbolResponseAsync(derived, solution, verbosity, cancellationToken));
             }
          }
       }
@@ -157,8 +157,10 @@ public class GetTypeHierarchyTool
          returnedCount: derivedTypes.Count);
    }
 
-   private SymbolResponse CreateSymbolResponse(INamedTypeSymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      INamedTypeSymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }

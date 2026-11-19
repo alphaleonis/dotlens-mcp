@@ -130,14 +130,16 @@ public class AnalyzeMethodTool
          return (totalCount, null);
       }
 
-      var calls = rawCalls
-         .Select(call => new OutgoingCallInfo
+      var calls = new List<OutgoingCallInfo>();
+      foreach (var call in rawCalls)
+      {
+         calls.Add(new OutgoingCallInfo
          {
-            Symbol = RoslynHelpers.CreateSymbolResponse(
-               call.Symbol, verbosity, _workspaceManager.SolutionPath, _workspaceManager.UseAbsolutePaths),
+            Symbol = await RoslynHelpers.CreateSymbolResponseAsync(
+               call.Symbol, verbosity, solution, _workspaceManager.SolutionPath, _workspaceManager.UseAbsolutePaths, cancellationToken),
             CallSite = call.CallSite.ToSymbolLocation(_workspaceManager.FormatPath)
-         })
-         .ToList();
+         });
+      }
 
       return (totalCount, calls);
    }

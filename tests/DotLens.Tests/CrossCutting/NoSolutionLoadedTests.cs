@@ -229,7 +229,7 @@ public class NoSolutionLoadedTests : MockableRoslynServiceTestBase
    public async Task GetFileOverview_NoSolutionLoaded_ThrowsException()
    {
       await AssertThrowsNoSolutionLoadedAsync(() =>
-         _getFileOverview.GetFileOverviewAsync("test.cs", ct: CT));
+         _getFileOverview.GetFileOverviewAsync("test.cs", cancellationToken: CT));
    }
 
    [Fact]

@@ -2324,7 +2324,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    {
       var tool = new GetFileOverviewTool(_fixture.Workspace);
 
-      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("ExtensionMembers.cs"), ct: CT);
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("ExtensionMembers.cs"), cancellationToken: CT);
 
       var types = result.Data.Types ?? throw new InvalidOperationException("Compact verbosity lists types");
       Assert.Equal(
@@ -2344,7 +2344,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
    {
       var tool = new GetFileOverviewTool(_fixture.Workspace);
 
-      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("RefReceiverExtensions.cs"), ct: CT);
+      var result = await tool.GetFileOverviewAsync(_fixture.GetPath("RefReceiverExtensions.cs"), cancellationToken: CT);
 
       var types = result.Data.Types ?? throw new InvalidOperationException("Compact verbosity lists types");
       Assert.Equal(RefReceiverExtensionBlocks, types.OfType<ExtensionSymbolResponse>());

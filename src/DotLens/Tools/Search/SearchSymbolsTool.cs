@@ -91,11 +91,13 @@ public class SearchSymbolsTool
          }
 
          // Format and collect this symbol
-         results.Add(RoslynHelpers.CreateSymbolResponse(
+         results.Add(await RoslynHelpers.CreateSymbolResponseAsync(
             symbol,
             verbosity,
+            solution,
             _workspace.SolutionPath,
-            _workspace.UseAbsolutePaths));
+            _workspace.UseAbsolutePaths,
+            cancellationToken));
       }
 
       return ToolResult.Create(
@@ -152,11 +154,9 @@ public class SearchSymbolsTool
       };
 
       // Paginate and format
-      var results = sorted
-         .Skip(offset)
-         .Take(maxResults)
-         .Select(s => RoslynHelpers.CreateSymbolResponse(s, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths))
-         .ToList();
+      var results = new List<SymbolResponse>();
+      foreach (var s in sorted.Skip(offset).Take(maxResults))
+         results.Add(await RoslynHelpers.CreateSymbolResponseAsync(s, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken));
 
       var totalCount = allSymbols.Count;
       var hasMore = offset + results.Count < totalCount;

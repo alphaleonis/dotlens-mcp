@@ -90,7 +90,8 @@ public class GetContainingMemberTool
             $"No containing member found at {filePath}:{line}:{column}");
       }
 
-      var memberResponse = CreateSymbolResponse(immediateMember, verbosity);
+      var solution = document.Project.Solution;
+      var memberResponse = await CreateSymbolResponseAsync(immediateMember, solution, verbosity, cancellationToken);
 
       // Build hierarchy responses if requested
       IReadOnlyList<SymbolResponse>? hierarchyResponses = null;
@@ -98,7 +99,10 @@ public class GetContainingMemberTool
 
       if (includeHierarchy && hierarchy.Count > 0)
       {
-         hierarchyResponses = hierarchy.Select(s => CreateSymbolResponse(s, verbosity)).ToList();
+         var responses = new List<SymbolResponse>();
+         foreach (var s in hierarchy)
+            responses.Add(await CreateSymbolResponseAsync(s, solution, verbosity, cancellationToken));
+         hierarchyResponses = responses;
 
          // Build context path like "Namespace.Class.Method"
          var pathParts = hierarchy
@@ -128,13 +132,11 @@ public class GetContainingMemberTool
          suggestedNextTools: suggestions);
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(
-         symbol,
-         verbosity,
-         _workspace.SolutionPath,
-         _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }
 

@@ -90,7 +90,7 @@ public class FindOverridesTool
       {
          foreach (var overrideSymbol in allOverrides.Take(maxResults))
          {
-            overrideResponses.Add(CreateSymbolResponse(overrideSymbol, verbosity));
+            overrideResponses.Add(await CreateSymbolResponseAsync(overrideSymbol, solution, verbosity, cancellationToken));
          }
       }
 
@@ -112,7 +112,7 @@ public class FindOverridesTool
       return ToolResult.Create(
          new FindOverridesResponse
          {
-            BaseMember = CreateSymbolResponse(baseMember, verbosity),
+            BaseMember = await CreateSymbolResponseAsync(baseMember, solution, verbosity, cancellationToken),
             TotalOverrides = totalOverrides,
             Overrides = verbosity == ToolResultVerbosity.Summary ? null : overrideResponses
          },
@@ -136,8 +136,10 @@ public class FindOverridesTool
       return current;
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }

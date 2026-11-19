@@ -93,7 +93,7 @@ public class FindUnusedCodeTool
          if (ShouldAnalyzeTypes(symbolKindFilter))
          {
             await AnalyzeTypesAsync(
-               compilation, usage, symbolKindFilter, modifiers,
+               compilation, solution, usage, symbolKindFilter, modifiers,
                includePrivate, includeInternal,
                unusedSymbols, countByKind, maxResults, verbosity,
                cancellationToken);
@@ -103,7 +103,7 @@ public class FindUnusedCodeTool
          if (ShouldAnalyzeMembers(symbolKindFilter) && unusedSymbols.Count < maxResults)
          {
             await AnalyzeMembersAsync(
-               compilation, usage, symbolKindFilter, modifiers,
+               compilation, solution, usage, symbolKindFilter, modifiers,
                includePrivate, includeInternal,
                unusedSymbols, countByKind, maxResults, verbosity,
                cancellationToken);
@@ -113,7 +113,7 @@ public class FindUnusedCodeTool
          if (ShouldAnalyzeConstructors(symbolKindFilter) && unusedSymbols.Count < maxResults)
          {
             await AnalyzeConstructorsAsync(
-               compilation, usage, symbolKindFilter, modifiers,
+               compilation, solution, usage, symbolKindFilter, modifiers,
                includePrivate, includeInternal,
                unusedSymbols, countByKind, maxResults, verbosity,
                cancellationToken);
@@ -160,6 +160,7 @@ public class FindUnusedCodeTool
 
    private async Task AnalyzeTypesAsync(
       Compilation compilation,
+      Solution solution,
       UsageAnalysis usage,
       SymbolKindFilter? kindFilter,
       ModifierFilter[]? modifiers,
@@ -205,13 +206,14 @@ public class FindUnusedCodeTool
             var kindName = typeSymbol.TypeKind.ToString();
             countByKind[kindName] = countByKind.GetValueOrDefault(kindName) + 1;
 
-            unusedSymbols.Add(CreateSymbolResponse(typeSymbol, verbosity));
+            unusedSymbols.Add(await CreateSymbolResponseAsync(typeSymbol, solution, verbosity, cancellationToken));
          }
       }
    }
 
    private async Task AnalyzeMembersAsync(
       Compilation compilation,
+      Solution solution,
       UsageAnalysis usage,
       SymbolKindFilter? kindFilter,
       ModifierFilter[]? modifiers,
@@ -264,13 +266,14 @@ public class FindUnusedCodeTool
             var kindName = member.Kind.ToString();
             countByKind[kindName] = countByKind.GetValueOrDefault(kindName) + 1;
 
-            unusedSymbols.Add(CreateSymbolResponse(member, verbosity));
+            unusedSymbols.Add(await CreateSymbolResponseAsync(member, solution, verbosity, cancellationToken));
          }
       }
    }
 
    private async Task AnalyzeConstructorsAsync(
       Compilation compilation,
+      Solution solution,
       UsageAnalysis usage,
       SymbolKindFilter? kindFilter,
       ModifierFilter[]? modifiers,
@@ -319,15 +322,16 @@ public class FindUnusedCodeTool
                const string kindName = "Constructor";
                countByKind[kindName] = countByKind.GetValueOrDefault(kindName) + 1;
 
-               unusedSymbols.Add(CreateSymbolResponse(ctor, verbosity));
+               unusedSymbols.Add(await CreateSymbolResponseAsync(ctor, solution, verbosity, cancellationToken));
             }
          }
       }
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(
-         symbol, verbosity, _workspaceManager.SolutionPath, _workspaceManager.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspaceManager.SolutionPath, _workspaceManager.UseAbsolutePaths, cancellationToken);
    }
 }

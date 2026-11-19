@@ -101,8 +101,8 @@ public class GetAttributesTool
 
                if (RoslynHelpers.HasAttribute(symbol, attributeName))
                {
-                  results.Add(RoslynHelpers.CreateSymbolResponse(
-                     symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths));
+                  results.Add(await RoslynHelpers.CreateSymbolResponseAsync(
+                     symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken));
 
                   if (results.Count >= maxResults)
                      break;

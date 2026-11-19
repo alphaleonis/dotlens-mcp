@@ -27,16 +27,18 @@ public class GetSymbolInfoTool
       ToolResultVerbosity verbosity = ToolResultVerbosity.Full,
       CancellationToken cancellationToken = default)
    {
-      _workspace.EnsureSolutionLoaded();
+      var solution = _workspace.EnsureSolutionLoaded();
 
       var lookupResult = await _symbolLookup.FindSingleAsync<ISymbol>(target, filter: null, cancellationToken);
       var symbol = lookupResult.Symbol;
 
-      var response = RoslynHelpers.CreateSymbolResponse(
+      var response = await RoslynHelpers.CreateSymbolResponseAsync(
          symbol,
          verbosity,
+         solution,
          _workspace.SolutionPath,
-         _workspace.UseAbsolutePaths);
+         _workspace.UseAbsolutePaths,
+         cancellationToken);
 
       // Build context-aware suggestions
       var symbolName = RoslynHelpers.GetName(symbol);

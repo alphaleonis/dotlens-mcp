@@ -114,7 +114,7 @@ public class FindSymbolsTool
             break;
          }
 
-         results.Add(RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths));
+         results.Add(await RoslynHelpers.CreateSymbolResponseAsync(symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken));
       }
 
       return ToolResult.Create(
@@ -159,11 +159,9 @@ public class FindSymbolsTool
          _ => allSymbols.AsEnumerable()
       };
 
-      var results = sorted
-         .Skip(offset)
-         .Take(maxResults)
-         .Select(s => RoslynHelpers.CreateSymbolResponse(s, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths))
-         .ToList();
+      var results = new List<SymbolResponse>();
+      foreach (var s in sorted.Skip(offset).Take(maxResults))
+         results.Add(await RoslynHelpers.CreateSymbolResponseAsync(s, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken));
 
       var totalCount = allSymbols.Count;
       var hasMore = offset + results.Count < totalCount;

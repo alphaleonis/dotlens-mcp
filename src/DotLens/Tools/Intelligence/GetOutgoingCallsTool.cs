@@ -71,10 +71,9 @@ public class GetOutgoingCallsTool
       var totalCount = distinctSymbols.Count;
 
       // Apply maxResults limit and convert to SymbolResponse
-      var distinctCalls = distinctSymbols
-         .Take(maxResults)
-         .Select(s => RoslynHelpers.CreateSymbolResponse(s, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths))
-         .ToList();
+      var distinctCalls = new List<SymbolResponse>();
+      foreach (var s in distinctSymbols.Take(maxResults))
+         distinctCalls.Add(await RoslynHelpers.CreateSymbolResponseAsync(s, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken));
 
       // Build context-aware suggestions
       var suggestions = new List<string>

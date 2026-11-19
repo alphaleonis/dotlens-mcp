@@ -25,12 +25,12 @@ public class GetFileOverviewTool
       [Description("File path (absolute or solution-relative).")] string filePath,
       [Description("Response detail level.")]
       ToolResultVerbosity verbosity = ToolResultVerbosity.Compact,
-      CancellationToken ct = default)
+      CancellationToken cancellationToken = default)
    {
-      var document = await _workspace.GetDocumentAsync(filePath, ct);
+      var document = await _workspace.GetDocumentAsync(filePath, cancellationToken);
 
-      var syntaxTree = await document.GetSyntaxTreeAsync(ct);
-      var semanticModel = await document.GetSemanticModelAsync(ct);
+      var syntaxTree = await document.GetSyntaxTreeAsync(cancellationToken);
+      var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
 
       if (syntaxTree == null || semanticModel == null)
       {
@@ -39,8 +39,8 @@ public class GetFileOverviewTool
             "Could not analyze file");
       }
 
-      var root = await syntaxTree.GetRootAsync(ct);
-      var text = await syntaxTree.GetTextAsync(ct);
+      var root = await syntaxTree.GetRootAsync(cancellationToken);
+      var text = await syntaxTree.GetTextAsync(cancellationToken);
 
       // Single pass through descendant nodes to collect all information
       BaseNamespaceDeclarationSyntax? namespaceDecl = null;
@@ -61,14 +61,16 @@ public class GetFileOverviewTool
                typeCount++;
                if (verbosity != ToolResultVerbosity.Summary)
                {
-                  var symbol = semanticModel.GetDeclaredSymbol(node, ct);
+                  var symbol = semanticModel.GetDeclaredSymbol(node, cancellationToken);
                   if (symbol != null)
                   {
-                     types.Add(RoslynHelpers.CreateSymbolResponse(
+                     types.Add(await RoslynHelpers.CreateSymbolResponseAsync(
                         symbol,
                         verbosity,
+                        document.Project.Solution,
                         _workspace.SolutionPath,
-                        _workspace.UseAbsolutePaths));
+                        _workspace.UseAbsolutePaths,
+                        cancellationToken));
                   }
                }
                break;
@@ -79,7 +81,7 @@ public class GetFileOverviewTool
          }
       }
 
-      var diagnostics = semanticModel.GetDiagnostics(cancellationToken: ct);
+      var diagnostics = semanticModel.GetDiagnostics(cancellationToken: cancellationToken);
       var errorCount = diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
       var warningCount = diagnostics.Count(d => d.Severity == DiagnosticSeverity.Warning);
 

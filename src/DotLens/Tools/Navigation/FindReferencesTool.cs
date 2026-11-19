@@ -117,7 +117,7 @@ public class FindReferencesTool
       return ToolResult.Create(
          new FindReferencesResponse
          {
-            Symbol = CreateSymbolResponse(symbol, verbosity),
+            Symbol = await CreateSymbolResponseAsync(symbol, solution, verbosity, cancellationToken),
             TotalReferences = totalReferences,
             References = referenceList
          },
@@ -126,9 +126,11 @@ public class FindReferencesTool
          returnedCount: referenceList?.Count ?? 0);
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 
    /// <summary>

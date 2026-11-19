@@ -744,13 +744,17 @@ public static class RoslynHelpers
    /// </summary>
    /// <param name="symbol">The symbol to format.</param>
    /// <param name="verbosity">Level of detail to include.</param>
+   /// <param name="solution">The solution whose syntax trees the symbol comes from, which the declaration binds in.</param>
    /// <param name="solutionFilePath">Optional solution file path for relative path formatting.</param>
    /// <param name="useAbsolutePaths">Whether to use absolute paths in output.</param>
-   public static SymbolResponse CreateSymbolResponse(
+   /// <param name="cancellationToken">Cancellation token.</param>
+   public static async Task<SymbolResponse> CreateSymbolResponseAsync(
       ISymbol symbol,
       ToolResultVerbosity verbosity,
+      Solution solution,
       string? solutionFilePath,
-      bool useAbsolutePaths)
+      bool useAbsolutePaths,
+      CancellationToken cancellationToken)
    {
       var sourceLocation = symbol.Locations.FirstOrDefault(loc => loc.IsInSource);
 
@@ -810,7 +814,7 @@ public static class RoslynHelpers
       string? documentation = null;
       if (verbosity == ToolResultVerbosity.Full)
       {
-         var xmlDoc = symbol.GetDocumentationCommentXml();
+         var xmlDoc = symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken);
          if (!string.IsNullOrWhiteSpace(xmlDoc))
             documentation = xmlDoc;
       }
@@ -837,7 +841,7 @@ public static class RoslynHelpers
       }
 
       // Get declaration for Full verbosity
-      string? declaration = verbosity == ToolResultVerbosity.Full ? GetDeclaration(symbol) : null;
+      string? declaration = verbosity == ToolResultVerbosity.Full ? await GetDeclarationAsync(symbol, solution, cancellationToken) : null;
 
       // Create the appropriate derived type based on symbol kind
       return symbol switch
@@ -1200,7 +1204,10 @@ public static class RoslynHelpers
    /// <summary>
    /// Gets a full declaration string for a symbol including accessibility and modifiers.
    /// </summary>
-   internal static string GetDeclaration(ISymbol symbol)
+   /// <param name="symbol">The symbol to declare.</param>
+   /// <param name="solution">The solution whose syntax trees the symbol comes from.</param>
+   /// <param name="cancellationToken">Cancellation token.</param>
+   internal static async Task<string> GetDeclarationAsync(ISymbol symbol, Solution solution, CancellationToken cancellationToken)
    {
       if (symbol is IFieldSymbol { IsFixedSizeBuffer: true } buffer)
          return BuildFixedSizeBufferDeclaration(buffer);
@@ -1212,7 +1219,7 @@ public static class RoslynHelpers
       // For types, SymbolDisplayMemberOptions don't apply - must build manually.
       // A declaration describes the definition, so a constructed type such as List<int> shows List<T>.
       if (symbol is INamedTypeSymbol type)
-         return BuildTypeDeclaration(type.OriginalDefinition);
+         return await BuildTypeDeclarationAsync(type.OriginalDefinition, solution, cancellationToken);
 
       // For namespaces
       if (symbol is INamespaceSymbol ns)
@@ -1277,7 +1284,7 @@ public static class RoslynHelpers
       return sb.ToString();
    }
 
-   private static string BuildTypeDeclaration(INamedTypeSymbol type)
+   private static async Task<string> BuildTypeDeclarationAsync(INamedTypeSymbol type, Solution solution, CancellationToken cancellationToken)
    {
       if (type.IsExtension)
          return BuildExtensionDeclaration(type);
@@ -1351,7 +1358,7 @@ public static class RoslynHelpers
       {
          (0, _) => GetMetadataBaseTypes(type),
          (_, <= 1) => baseLists.SelectMany(b => b.Types).Select(t => SyntaxText.OneLine(t)).ToList(),
-         _ => GetMergedBaseTypes(type, baseLists),
+         _ => await GetMergedBaseTypesAsync(type, baseLists, solution, cancellationToken),
       };
       if (baseTypes.Count > 0)
          sb.Append(" : ").Append(string.Join(", ", baseTypes));
@@ -1370,7 +1377,8 @@ public static class RoslynHelpers
    /// The parts may spell one base type differently, through an alias or a namespace, or name it twice, so the list
    /// comes from the symbol, not from the text.
    /// </remarks>
-   private static List<string> GetMergedBaseTypes(INamedTypeSymbol type, List<BaseListSyntax> baseLists)
+   private static async Task<List<string>> GetMergedBaseTypesAsync(
+      INamedTypeSymbol type, List<BaseListSyntax> baseLists, Solution solution, CancellationToken cancellationToken)
    {
       var baseTypes = new List<string>();
       if (type is { TypeKind: TypeKind.Class, BaseType: { SpecialType: not SpecialType.System_Object } baseClass })
@@ -1380,7 +1388,7 @@ public static class RoslynHelpers
       }
 
       // The compiler adds the IEquatable of a record itself, so it shows only when a part writes it.
-      var writesOwnEquatable = type.IsRecord && WritesOwnEquatable(type, baseLists);
+      var writesOwnEquatable = type.IsRecord && await WritesOwnEquatableAsync(type, baseLists, solution, cancellationToken);
       baseTypes.AddRange(type.Interfaces
          .Where(i => writesOwnEquatable || !IsRecordEquatable(type, i))
          .Select(i => i.ToDisplayString(BaseTypeFormat)));
@@ -1391,23 +1399,51 @@ public static class RoslynHelpers
    /// Returns whether a base list of a partial record's parts writes the IEquatable of the record itself.
    /// </summary>
    /// <returns>
-   /// True also when the compilation that declares the record is unavailable, as for a record that a compilation with
-   /// another core library retargets, so the interface then shows whether or not a part wrote it.
+   /// True also when no compilation that declares the record is found, so the interface then shows whether or not a part
+   /// wrote it.
    /// </returns>
-   private static bool WritesOwnEquatable(INamedTypeSymbol type, List<BaseListSyntax> baseLists)
+   private static async Task<bool> WritesOwnEquatableAsync(
+      INamedTypeSymbol type, List<BaseListSyntax> baseLists, Solution solution, CancellationToken cancellationToken)
    {
       var written = baseLists.SelectMany(b => b.Types).Select(t => t.Type).ToList();
-      if (type.ContainingAssembly is not ISourceAssemblySymbol { Compilation: var compilation }
-         || !written.All(t => compilation.ContainsSyntaxTree(t.SyntaxTree)))
-      {
+      var trees = written.Select(t => t.SyntaxTree).Distinct().ToList();
+      if (await GetDeclaringCompilationAsync(type, trees, solution, cancellationToken) is not { } compilation)
          return true;
-      }
 
+      // A retargeted record is not the symbol that the declaring compilation binds, so each part compares with its own symbol.
       return written.GroupBy(t => t.SyntaxTree).Any(part =>
       {
          var model = compilation.GetSemanticModel(part.Key);
-         return part.Any(t => model.GetTypeInfo(t).Type is INamedTypeSymbol bound && IsRecordEquatable(type, bound));
+         return part.Any(t =>
+            t.FirstAncestorOrSelf<BaseTypeDeclarationSyntax>() is { } declaration
+            && model.GetDeclaredSymbol(declaration, cancellationToken) is { } declared
+            && model.GetTypeInfo(t, cancellationToken).Type is INamedTypeSymbol bound
+            && IsRecordEquatable(declared, bound));
       });
+   }
+
+   /// <summary>
+   /// Returns the compilation that declares a type from the given syntax trees.
+   /// </summary>
+   /// <remarks>
+   /// A type that another compilation retargets has no source assembly, so the declaring project is the one whose document
+   /// holds the exact tree instance. The copy of a linked file in another project has its own tree, so it does not match.
+   /// </remarks>
+   /// <returns>The compilation that contains every tree, or null when no project of the solution holds them all.</returns>
+   private static async Task<Compilation?> GetDeclaringCompilationAsync(
+      INamedTypeSymbol type, List<SyntaxTree> trees, Solution solution, CancellationToken cancellationToken)
+   {
+      if (type.ContainingAssembly is ISourceAssemblySymbol { Compilation: var own })
+         return trees.All(own.ContainsSyntaxTree) ? own : null;
+
+      if (trees.Select(t => solution.GetDocument(t)?.Project.Id).Distinct().ToList() is not [{ } projectId]
+         || solution.GetProject(projectId) is not { } project)
+      {
+         return null;
+      }
+
+      var compilation = await project.GetCompilationAsync(cancellationToken);
+      return compilation is not null && trees.All(compilation.ContainsSyntaxTree) ? compilation : null;
    }
 
    private static bool IsRecordEquatable(INamedTypeSymbol type, INamedTypeSymbol implemented) =>

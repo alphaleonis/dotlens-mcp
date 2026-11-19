@@ -63,6 +63,7 @@ public class GoToDefinitionTool
       // Find the symbol using SymbolLookupService (validates solution is loaded internally)
       var lookupResult = await _symbolLookup.FindSingleAsync<ISymbol>(target, filter: null, cancellationToken);
       var symbol = lookupResult.Symbol;
+      var solution = _workspace.EnsureSolutionLoaded();
 
       // Get source locations with deterministic ordering (by file path, then line number)
       var sourceLocations = symbol.Locations
@@ -125,15 +126,17 @@ public class GoToDefinitionTool
       return ToolResult.Create(
          new GoToDefinitionResponse
          {
-            Symbol = CreateSymbolResponse(symbol, verbosity),
+            Symbol = await CreateSymbolResponseAsync(symbol, solution, verbosity, cancellationToken),
             Definitions = definitions,
             SourceCodes = sourceCodes
          },
          suggestedNextTools: suggestions.ToArray());
    }
 
-   private SymbolResponse CreateSymbolResponse(ISymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      ISymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }

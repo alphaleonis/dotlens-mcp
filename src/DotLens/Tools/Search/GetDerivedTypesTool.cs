@@ -68,10 +68,9 @@ public class GetDerivedTypesTool
       List<SymbolResponse>? results = null;
       if (verbosity != ToolResultVerbosity.Summary)
       {
-         results = derivedList
-            .Take(maxResults)
-            .Select(dt => CreateSymbolResponse(dt, verbosity))
-            .ToList();
+         results = [];
+         foreach (var dt in derivedList.Take(maxResults))
+            results.Add(await CreateSymbolResponseAsync(dt, solution, verbosity, cancellationToken));
       }
 
       // Build context-aware suggestions
@@ -99,9 +98,11 @@ public class GetDerivedTypesTool
          returnedCount: results?.Count ?? 0);
    }
 
-   private SymbolResponse CreateSymbolResponse(INamedTypeSymbol symbol, ToolResultVerbosity verbosity)
+   private Task<SymbolResponse> CreateSymbolResponseAsync(
+      INamedTypeSymbol symbol, Solution solution, ToolResultVerbosity verbosity, CancellationToken cancellationToken)
    {
-      return RoslynHelpers.CreateSymbolResponse(symbol, verbosity, _workspace.SolutionPath, _workspace.UseAbsolutePaths);
+      return RoslynHelpers.CreateSymbolResponseAsync(
+         symbol, verbosity, solution, _workspace.SolutionPath, _workspace.UseAbsolutePaths, cancellationToken);
    }
 }
 
