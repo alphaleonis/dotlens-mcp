@@ -122,3 +122,8 @@
 ## dotlens-ljme — Extension kind filter (2026-11-19)
 - A one-value enum addition passed review in one pass when the brief named every consumer of the enum to check (find_references) and asked whether the search path even offers the symbol to the filter.
 - Adding an enum value mid-list renumbers the integer values System.Text.Json's string-enum converter still accepts; append new values to enums that tools take as parameters.
+
+## dotlens-r1yu — C# 15 unions as unions (2026-11-19)
+- A feature whose nib carried a Roslyn probe table and the operator's decisions went through one implementer pass and one approving review with no findings, about 15 minutes end to end; asking the implementer to extend the table (21 shapes) before coding settled every edge the review would otherwise have raised.
+- When the compiler forbids a mix (CS0261: partial parts must all be unions or all structs), "any declaring syntax" and "all declaring syntaxes" coincide; probe for such a rule before writing a per-part keyword decision.
+

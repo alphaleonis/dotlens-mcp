@@ -1,12 +1,12 @@
 {
-  "plan": "dotlens-ljme",
+  "plan": "dotlens-r1yu",
   "tracker": "nibs",
-  "integration_branch": "deliver/dotlens-ljme",
+  "integration_branch": "deliver/dotlens-r1yu",
   "current_phase": null,
   "step": "SELECT",
   "review_spec": "bugs",
-  "started_at": "2026-11-19T14:45:38Z",
-  "updated_at": "2026-11-19T14:59:19Z",
-  "note": "Complete 2026-11-19: dotlens-ljme (SymbolKindFilter.Extension) delivered on deliver/dotlens-ljme, branched from deliver/dotlens-t76f. Open questions filed as dotlens-embu (draft, 1 confirm). .nibs changes (ljme close, embu) left uncommitted in the .nibs repo, as earlier runs did.",
+  "started_at": "2026-11-19T15:02:22Z",
+  "updated_at": "2026-11-19T15:20:21Z",
+  "note": "Complete 2026-11-19: dotlens-r1yu (C# 15 unions reported as unions) delivered on deliver/dotlens-r1yu (commit 13f5957), branched from deliver/dotlens-ljme. No open questions filed. .nibs changes (r1yu close) left uncommitted in the .nibs repo, as earlier runs did.",
   "exit": "complete"
 }
