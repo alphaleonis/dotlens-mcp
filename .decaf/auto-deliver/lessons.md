@@ -95,3 +95,7 @@
 
 ## Type members group — var9, qx4f (2026-11-19)
 - Two small same-tool bugs in one implementer pass and one approving review took about 15 minutes; a guard test that scans source for a class of mistake (tool names in strings) costs little and closes the class, not the instance.
+
+## dotlens-2hzp — using options (2026-11-19)
+- With Roslyn as the oracle, the first review still found three divergences and the re-review two more, all on input shapes the implementer had not enumerated (global vs plain alone, trivia under extern aliases, directives on the first using). Ask the implementer up front for a table of input shapes run through Roslyn, not only the cases the nib lists.
+- UsingDirectiveLayout has drawn correctness findings in 10 reviews since 2026-11-17; treat any change there as re-review-worthy by default.
