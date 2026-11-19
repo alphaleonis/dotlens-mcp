@@ -50,15 +50,19 @@ internal static class UsingDirectiveLayout
    private const string SeparateGroupsKey = "dotnet_separate_import_directive_groups";
 
    /// <summary>
-   /// Returns the layout options of the document: its line break, and the two using options of its .editorconfig.
+   /// Returns the layout options of the document: its line breaks, and the two using options of its .editorconfig.
    /// </summary>
    public static async Task<UsingLayoutOptions> GetOptionsAsync(Document document, CancellationToken cancellationToken)
    {
       var tree = await document.GetSyntaxTreeAsync(cancellationToken)
          ?? throw new InvalidOperationException($"The document has no syntax tree: {document.FilePath}");
       var config = document.Project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GetOptions(tree);
+      var formatting = await document.GetOptionsAsync(cancellationToken);
+      var optionNewLine = formatting.GetOption(FormattingOptions.NewLine);
+      var text = await document.GetTextAsync(cancellationToken);
       return new UsingLayoutOptions(
-         await GetNewLineAsync(document, cancellationToken),
+         GetFirstLineBreak(text) ?? optionNewLine,
+         optionNewLine,
          ReadBoolean(config, SortSystemFirstKey, defaultValue: true),
          ReadBoolean(config, SeparateGroupsKey, defaultValue: false));
    }
@@ -68,21 +72,14 @@ internal static class UsingDirectiveLayout
    private static bool ReadBoolean(AnalyzerConfigOptions config, string key, bool defaultValue) =>
       config.TryGetValue(key, out var value) && bool.TryParse(value, out var parsed) ? parsed : defaultValue;
 
-   /// <summary>
-   /// Returns the line break that the document's text uses.
-   /// </summary>
-   /// <returns>The line break that ends the first line, or the document's formatting option when the text has one line.</returns>
-   private static async Task<string> GetNewLineAsync(Document document, CancellationToken cancellationToken)
+   /// <returns>The line break that ends the first line, or null when the text has one line.</returns>
+   private static string? GetFirstLineBreak(SourceText text)
    {
-      var text = await document.GetTextAsync(cancellationToken);
-      if (text.Lines.Count > 1)
-      {
-         var firstLine = text.Lines[0];
-         return text.ToString(TextSpan.FromBounds(firstLine.End, firstLine.EndIncludingLineBreak));
-      }
+      if (text.Lines.Count < 2)
+         return null;
 
-      var options = await document.GetOptionsAsync(cancellationToken);
-      return options.GetOption(FormattingOptions.NewLine);
+      var firstLine = text.Lines[0];
+      return text.ToString(TextSpan.FromBounds(firstLine.End, firstLine.EndIncludingLineBreak));
    }
 
    /// <summary>
@@ -139,17 +136,22 @@ internal static class UsingDirectiveLayout
          var split = IsSplit(externRuns, usingRuns);
          var keepBlankLines = KeepsBlankLines(split, externRuns, usingRuns, usingList.Order);
          var newLine = GetListNewLine(
-            GetExterns(container).Concat<SyntaxNode>(GetUsings(container).Where(IsKept)), options.NewLine);
+            GetExterns(container).Concat<SyntaxNode>(GetUsings(container).Where(IsKept)), options);
+         var sharesExternLine = SharesExternLine(container);
          if (GetExterns(container).Count > 0)
          {
-            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, sort: !split, newLine);
+            marked = Place(
+               marked, container, ExternList, externRuns, keepBlankLines, sort: !split, newLine,
+               endsLineAtGroup: false, sharesExternLine: false);
             container = marked.GetAnnotatedNodes(marker).Single();
          }
 
          if (GetUsings(container).Count > 0)
          {
             var runs = SplitRuns(GetUsings(container), IsKept);
-            marked = Place(marked, container, usingList, runs, keepBlankLines, sort: !split, newLine);
+            marked = Place(
+               marked, container, usingList, runs, keepBlankLines, sort: !split, newLine,
+               endsLineAtGroup: !keepBlankLines, sharesExternLine);
          }
       }
 
@@ -188,9 +190,10 @@ internal static class UsingDirectiveLayout
       var usingList = UsingList(options);
       var usings = GetUsings(container);
       var codeRegions = regions.EnclosingCode(container, usings[^1].GetLastToken().GetNextToken(includeZeroWidth: true));
-      var newLine = GetListNewLine(GetExterns(container).Concat<SyntaxNode>(usings), options.NewLine);
+      var newLine = GetListNewLine(GetExterns(container).Concat<SyntaxNode>(usings), options);
+      var sharesExternLine = SharesExternLine(container);
       var indented = newUsing
-         .WithLeadingTrivia(GetIndentation(usings[0].GetLeadingTrivia()))
+         .WithLeadingTrivia(GetListIndentation(container, usings[0], sharesExternLine))
          .WithTrailingTrivia(SyntaxFactory.EndOfLine(newLine));
       var runs = SplitRuns(usings, _ => true);
       var externRuns = SplitRuns(GetExterns(container), _ => true);
@@ -213,7 +216,8 @@ internal static class UsingDirectiveLayout
          runs.Insert(0, new Run<UsingDirectiveSyntax>(header, [(indented, -1)], runs[0].Start));
       }
 
-      return Place(unit, container, usingList, runs, keepBlankLines, sort: !split, newLine);
+      return Place(
+         unit, container, usingList, runs, keepBlankLines, sort: !split, newLine, endsLineAtGroup: true, sharesExternLine);
    }
 
    /// <summary>
@@ -299,6 +303,15 @@ internal static class UsingDirectiveLayout
    /// <param name="keepBlankLines">Whether the entries keep the blank lines above them.</param>
    /// <param name="sort">Whether to sort the entries of each run, or to keep them in the order the run holds them.</param>
    /// <param name="newLine">The line break of each line that the method adds, from <see cref="GetListNewLine"/>.</param>
+   /// <param name="endsLineAtGroup">
+   /// Whether an entry that starts a group ends the line of the entry above it too, so a blank line separates them as
+   /// Roslyn's Organize Imports leaves them when it sorts. Otherwise only the entry that starts the group gets a line
+   /// break, as Roslyn adds one to a list it does not sort. UsingToolsListLineBreakTests pins both.
+   /// </param>
+   /// <param name="sharesExternLine">
+   /// Whether the first entry of the list shares the line of the last extern alias, as the file had them before any
+   /// extern alias moved.
+   /// </param>
    private static CompilationUnitSyntax Place<T>(
       CompilationUnitSyntax root,
       SyntaxNode container,
@@ -306,7 +319,9 @@ internal static class UsingDirectiveLayout
       List<Run<T>> runs,
       bool keepBlankLines,
       bool sort,
-      string newLine)
+      string newLine,
+      bool endsLineAtGroup,
+      bool sharesExternLine)
       where T : SyntaxNode
    {
       var entries = list.Get(container);
@@ -353,36 +368,55 @@ internal static class UsingDirectiveLayout
          ordered.AddRange(sorted);
       }
 
-      var indentation = GetIndentation(entries[0].GetLeadingTrivia());
+      var indentation = GetListIndentation(container, entries[0], sharesExternLine);
+      var externLineEnded = !sharesExternLine || EndsWithLineBreak(GetExterns(container)[^1].GetTrailingTrivia());
+      var endsExternLine = false;
       var placed = new List<T>(ordered.Count);
       for (var i = 0; i < ordered.Count; i++)
       {
          var (current, index) = ordered[i];
+         var startsGroup = list.StartsGroup is { } isGroupStart
+            && (i == 0 ? !list.IsFirst(container) : isGroupStart(placed[i - 1], current));
+
+         // An entry keeps sharing its line only with the same follower, and with endsLineAtGroup only while that
+         // follower starts no group.
+         var endsLineAbove = endsLineAtGroup && startsGroup && !HasLineBreak(current.GetLeadingTrivia());
+         if (i == 0 && !externLineEnded && (index != 0 || endsLineAbove))
+            externLineEnded = endsExternLine = true;
+         else if (i > 0 && endsLineAbove)
+            placed[i - 1] = EndLine(placed[i - 1], newLine);
 
          // An entry from the middle of a shared line has no indentation of its own, since the space before it trails
          // the entry before it.
-         var startsLine = i == 0 || EndsWithLineBreak(placed[i - 1].GetTrailingTrivia());
-         if (startsLine && index > 0 && !EndsWithLineBreak(entries[index - 1].GetTrailingTrivia()))
+         var startsLine = i == 0 ? externLineEnded : EndsWithLineBreak(placed[i - 1].GetTrailingTrivia());
+         var sharedLineAbove = index > 0
+            ? !EndsWithLineBreak(entries[index - 1].GetTrailingTrivia())
+            : index == 0 && sharesExternLine;
+         if (startsLine && sharedLineAbove)
             current = current.WithLeadingTrivia(current.GetLeadingTrivia().AddRange(indentation));
 
-         var trailing = current.GetTrailingTrivia();
          var follower = i + 1 < ordered.Count ? ordered[i + 1].Index : entries.Count;
+         if (index >= 0 && follower != index + 1)
+            current = EndLine(current, newLine);
 
-         // An entry that shares its line with what follows keeps sharing it only with the same follower.
-         if (index >= 0 && follower != index + 1 && !EndsWithLineBreak(trailing))
-            current = current.WithTrailingTrivia(TrimTrailingWhitespace(trailing).Add(SyntaxFactory.EndOfLine(newLine)));
-
-         if (list.StartsGroup is { } startsGroup
-             && (i == 0 ? !list.IsFirst(container) : startsGroup(placed[i - 1], current)))
-         {
+         if (startsGroup)
             current = current.WithLeadingTrivia(SeparateGroup(current.GetLeadingTrivia(), newLine));
-         }
 
          placed.Add(current);
       }
 
+      SyntaxNode WithPlaced(SyntaxNode node)
+      {
+         var rewritten = list.With(node, placed);
+         if (!endsExternLine)
+            return rewritten;
+
+         var externs = GetExterns(rewritten);
+         return WithExterns(rewritten, externs.Replace(externs[^1], EndLine(externs[^1], newLine)));
+      }
+
       if (pending.Count == 0 && placed.Count > 0)
-         return root.ReplaceNode(container, list.With(container, placed));
+         return root.ReplaceNode(container, WithPlaced(container));
 
       var next = entries[^1].GetLastToken().GetNextToken(includeZeroWidth: true);
       var nextTrivia = placed.Count == 0 || EndsWithBlankLine(pending)
@@ -390,7 +424,7 @@ internal static class UsingDirectiveLayout
          : next.LeadingTrivia;
       return root.ReplaceSyntax(
          [container],
-         (_, rewritten) => list.With(rewritten, placed),
+         (_, rewritten) => WithPlaced(rewritten),
          [next],
          (_, rewritten) => rewritten.WithLeadingTrivia(pending.AddRange(nextTrivia)),
          [],
@@ -403,7 +437,7 @@ internal static class UsingDirectiveLayout
       UsingLayoutOptions options,
       ConditionalRegions regions)
    {
-      var newLine = GetListNewLine(unit.Externs, options.NewLine);
+      var newLine = GetListNewLine(unit.Externs, options);
       var next = unit.Externs.Count > 0
          ? unit.Externs[^1].GetLastToken().GetNextToken(includeZeroWidth: true)
          : unit.GetFirstToken(includeZeroWidth: true);
@@ -419,7 +453,11 @@ internal static class UsingDirectiveLayout
       if (!next.IsKind(SyntaxKind.EndOfFileToken) || nextTrivia.Any(t => !IsBlank(t)))
          placed = placed.WithTrailingTrivia(placed.GetTrailingTrivia().Add(SyntaxFactory.EndOfLine(newLine)));
 
-      return unit.ReplaceToken(next, next.WithLeadingTrivia(nextTrivia)).WithUsings([placed]);
+      var externs = unit.Externs;
+      if (externs.Count > 0)
+         externs = externs.Replace(externs[^1], EndLine(externs[^1], newLine));
+
+      return unit.ReplaceToken(next, next.WithLeadingTrivia(nextTrivia)).WithExterns(externs).WithUsings([placed]);
    }
 
    /// <summary>
@@ -455,23 +493,54 @@ internal static class UsingDirectiveLayout
    /// https://github.com/dotnet/roslyn/blob/c6e86165cb14cec562b68124c6cef927a4fc8fb7/src/Workspaces/SharedUtilitiesAndExtensions/Compiler/CSharp/Utilities/UsingsAndExternAliasesOrganizer.cs#L27-L31
    /// shows. UsingToolsListLineBreakTests pins it.
    /// </summary>
-   /// <remarks>
-   /// When no entry ends with a line break, Roslyn takes the one of its formatting options, and these methods take the
-   /// document's.
-   /// </remarks>
    /// <param name="entries">The extern aliases and usings of a container that remain, in the order of the file.</param>
-   /// <returns>The line break, or <paramref name="fallback"/> when no entry ends with one.</returns>
-   private static string GetListNewLine(IEnumerable<SyntaxNode> entries, string fallback) =>
-      entries.SelectMany(e => e.GetTrailingTrivia())
+   /// <returns>
+   /// The line break, or when no entry ends with one, the one of the formatting options as Roslyn takes it. A list
+   /// without entries takes the document's line break.
+   /// </returns>
+   private static string GetListNewLine(IEnumerable<SyntaxNode> entries, UsingLayoutOptions options)
+   {
+      var list = entries.ToList();
+      return list.SelectMany(e => e.GetTrailingTrivia())
          .Where(t => t.IsKind(SyntaxKind.EndOfLineTrivia))
          .Select(t => t.ToFullString())
-         .FirstOrDefault() ?? fallback;
+         .FirstOrDefault() ?? (list.Count > 0 ? options.OptionNewLine : options.NewLine);
+   }
+
+   /// <summary>
+   /// Returns whether the first using of the container shares the line of its last extern alias.
+   /// </summary>
+   private static bool SharesExternLine(SyntaxNode container) =>
+      GetExterns(container) is [.., var last] && GetUsings(container).Count > 0
+      && !EndsWithLineBreak(last.GetTrailingTrivia());
+
+   /// <summary>
+   /// Returns the indentation of a list whose first entry is <paramref name="first"/>, which is the one of the extern
+   /// aliases when the list shares the line of the last of them.
+   /// </summary>
+   private static SyntaxTriviaList GetListIndentation(SyntaxNode container, SyntaxNode first, bool sharesExternLine) =>
+      GetIndentation((sharesExternLine ? GetExterns(container)[0] : first).GetLeadingTrivia());
+
+   /// <summary>
+   /// Returns the entry with a line break at the end of its trailing trivia, in place of the whitespace there, unless
+   /// the trivia already ends with one.
+   /// </summary>
+   private static T EndLine<T>(T entry, string newLine)
+      where T : SyntaxNode
+   {
+      var trailing = entry.GetTrailingTrivia();
+      return EndsWithLineBreak(trailing)
+         ? entry
+         : entry.WithTrailingTrivia(TrimTrailingWhitespace(trailing).Add(SyntaxFactory.EndOfLine(newLine)));
+   }
+
+   private static bool HasLineBreak(SyntaxTriviaList trivia) => trivia.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia));
 
    /// <summary>
    /// Returns the leading trivia of an entry that starts a group, with a line break in front when it holds none.
    /// </summary>
    private static SyntaxTriviaList SeparateGroup(SyntaxTriviaList leading, string newLine) =>
-      leading.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))
+      HasLineBreak(leading)
          ? leading
          : leading.Insert(0, SyntaxFactory.EndOfLine(newLine));
 
@@ -973,8 +1042,10 @@ internal static class UsingDirectiveLayout
 /// The layout of the usings of one document.
 /// </summary>
 /// <param name="NewLine">
-/// The line break of the document: the one that ends its first line, or its formatting option when it has one line.
+/// The line break of the document: the one that ends its first line, or <paramref name="OptionNewLine"/> when it has one
+/// line.
 /// </param>
+/// <param name="OptionNewLine">The line break of the document's formatting options, which end_of_line sets.</param>
 /// <param name="SystemFirst">Whether usings of System and its namespaces sort before the others.</param>
 /// <param name="SeparateGroups">Whether a blank line separates groups of usings.</param>
-internal sealed record UsingLayoutOptions(string NewLine, bool SystemFirst, bool SeparateGroups);
+internal sealed record UsingLayoutOptions(string NewLine, string OptionNewLine, bool SystemFirst, bool SeparateGroups);

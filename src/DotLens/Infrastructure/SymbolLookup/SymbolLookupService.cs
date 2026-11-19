@@ -175,7 +175,7 @@ public class SymbolLookupService
    /// A variant has the same name, parameters, kind and project assembly, and the same type-parameter count at every
    /// other level. So <c>List</c> still finds <c>List&lt;T&gt;</c>, and a bare name never chooses between unrelated symbols.
    /// </remarks>
-   private static IReadOnlyList<SymbolLookupResult<TSymbol>> PreferNonGeneric<TSymbol>(
+   private static List<SymbolLookupResult<TSymbol>> PreferNonGeneric<TSymbol>(
       IReadOnlyList<SymbolLookupResult<TSymbol>> results,
       string[] segments,
       HashSet<string> projectAssemblies) where TSymbol : ISymbol

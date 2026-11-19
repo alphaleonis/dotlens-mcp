@@ -14,8 +14,9 @@ namespace DotLens.Tests.Refactoring;
 /// in files whose usings end their lines with a line break other than the rest of the file's.
 /// </summary>
 /// <remarks>
-/// In the cases, ~ stands for the line break of the using list and \n for the line break of the rest of the file. Each
-/// test runs its case with each combination of \n and \r\n for the two, in one file that it writes again for each.
+/// In the cases, ~ stands for the line break of the using list, \n for the line break of the rest of the file, and ^ for
+/// the line break that end_of_line sets, or Environment.NewLine when it is unset. Each test runs its case with each
+/// combination of \n and \r\n for the first two and each end_of_line, in one file that it writes again for each.
 /// </remarks>
 public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
 {
@@ -27,6 +28,13 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
       ("\r\n", "\r\n"),
       ("\r\n", "\n"),
       ("\n", "\r\n"),
+   ];
+
+   private static readonly (string? Value, string LineBreak)[] EndOfLines =
+   [
+      (null, Environment.NewLine),
+      ("lf", "\n"),
+      ("crlf", "\r\n"),
    ];
 
    /// <summary>
@@ -109,6 +117,58 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
          true,
          NamespaceSource("\n   using Zeta;~   using System.Text;\n\n"),
          NamespaceSource("\n   using System.Text;\n~   using Zeta;~\n")),
+      ["NoLineEndingEntry_Separated"] = new(
+         true,
+         FileSource("// header\nusing System.Text; using Zeta; "),
+         FileSource("// header\nusing System.Text; ^using Zeta; ")),
+      ["NoLineEndingEntryBelowExternAlias_Separated"] = new(
+         true,
+         FileSource("// header\nextern alias Ex; using Alpha; "),
+         FileSource("// header\nextern alias Ex; ^using Alpha; ")),
+      ["ExternAliasSharesLine"] = new(
+         false,
+         FileSource("extern alias Ex;using Zeta;~using Alpha;\n\n"),
+         FileSource("extern alias Ex;~using Alpha;\nusing Zeta;~\n")),
+      ["ExternAliasSharesLine_Separated"] = new(
+         true,
+         FileSource("extern alias Ex;using Zeta;~using Alpha;\n\n"),
+         FileSource("extern alias Ex;~~using Alpha;\n~using Zeta;~\n")),
+      ["ExternAliasSharesLineInOrder_Separated"] = new(
+         true,
+         FileSource("extern alias Ex; using Alpha;~using Zeta;\n\n"),
+         FileSource("extern alias Ex; ~using Alpha;~~using Zeta;\n\n")),
+      ["UsingSharesLineWithGroupStart_Separated"] = new(
+         true,
+         FileSource("using Zeta;~using System.Text;using Alpha;\n\n"),
+         FileSource("using System.Text;~~using Alpha;\n~using Zeta;~\n")),
+   };
+
+   /// <summary>
+   /// Cases where an entry sharing a line gets a line break, without the whitespace before it, only when the entry after
+   /// it changes or starts a group. Roslyn breaks every line but the last instead and keeps the whitespace.
+   /// </summary>
+   private static readonly Dictionary<string, Case> SharedLineOrganizeCases = new()
+   {
+      ["ExternAliasSharesLine"] = new(
+         false,
+         FileSource("extern alias Ex; using Zeta;~using Alpha;\n\n"),
+         FileSource("extern alias Ex;~using Alpha;\nusing Zeta;~\n")),
+      ["ExternAliasSharesLine_Separated"] = new(
+         true,
+         FileSource("extern alias Ex; using Zeta;~using Alpha;\n\n"),
+         FileSource("extern alias Ex;~~using Alpha;\n~using Zeta;~\n")),
+      ["ExternAliasSharesLineInNamespace"] = new(
+         false,
+         NamespaceSource("\n   extern alias Ex;using Zeta;~   using Alpha;\n\n"),
+         NamespaceSource("\n   extern alias Ex;~   using Alpha;\n   using Zeta;~\n")),
+      ["UsingSharesLineWithGroupStart_Separated"] = new(
+         true,
+         FileSource("using Zeta;~using System.Text; using Alpha;\n\n"),
+         FileSource("using System.Text;~~using Alpha;\n~using Zeta;~\n")),
+      ["NoLineEndingEntry"] = new(
+         false,
+         FileSource("// header\nusing Zeta; using Alpha; "),
+         FileSource("// header\nusing Alpha;^using Zeta;^")),
    };
 
    private static readonly Dictionary<string, Case> AddCases = new()
@@ -141,9 +201,35 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
          true,
          FileSource("extern alias Zulu;~"),
          FileSource("extern alias Zulu;~~using Beta;~~")),
+      ["NoLineEndingEntry"] = new(
+         false,
+         FileSource("// header\nusing Alpha; using Zeta; "),
+         FileSource("// header\nusing Alpha;^using Beta;^using Zeta; ")),
+      ["OnlyExternAliasSharesLine"] = new(
+         false,
+         FileSource("// header\nextern alias Zulu; "),
+         FileSource("// header\nextern alias Zulu;^using Beta;^^")),
+      ["OnlyExternAliasSharesLine_Separated"] = new(
+         true,
+         FileSource("// header\nextern alias Zulu; "),
+         FileSource("// header\nextern alias Zulu;^^using Beta;^^")),
+      ["ExternAliasSharesLine"] = new(
+         false,
+         FileSource("extern alias Ex; using Zeta;~\n"),
+         FileSource("extern alias Ex;~using Beta;~using Zeta;~\n")),
+      ["ExternAliasSharesLine_Separated"] = new(
+         true,
+         FileSource("extern alias Ex; using Alpha;~using Zeta;\n\n"),
+         FileSource("extern alias Ex;~~using Alpha;~~using Beta;~~using Zeta;\n\n")),
+      ["ExternAliasSharesLineInNamespace"] = new(
+         false,
+         NamespaceSource("\n   extern alias Ex; using Zeta;~"),
+         NamespaceSource("\n   extern alias Ex;~   using Beta;~   using Zeta;~")),
    };
 
    public static TheoryData<string> OrganizeCaseNames => [.. OrganizeCases.Keys];
+
+   public static TheoryData<string> SharedLineOrganizeCaseNames => [.. SharedLineOrganizeCases.Keys];
 
    public static TheoryData<string> AddCaseNames => [.. AddCases.Keys];
 
@@ -169,25 +255,48 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
    public async Task UsingTools_ListLineBreak_OrganizeUsings_WritesWhatRoslynWrites(string name)
    {
       var testCase = OrganizeCases[name];
-      await UseEditorConfigAsync(testCase.SeparateGroups);
-
-      for (var i = 0; i < LineBreaks.Length; i++)
+      var isNewFile = true;
+      foreach (var (endOfLine, optionBreak) in EndOfLines)
       {
-         var (fileBreak, listBreak) = LineBreaks[i];
-         var source = Expand(testCase.Source, fileBreak, listBreak);
-         var path = await WriteSourceAsync(TargetPath, source, isNewFile: i == 0);
-         var document = await WorkspaceManager.GetDocumentAsync(path, CT);
-         var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
+         await UseEditorConfigAsync(testCase.SeparateGroups, endOfLine);
+         foreach (var (fileBreak, listBreak) in LineBreaks)
+         {
+            var path = await WriteSourceAsync(
+               TargetPath, Expand(testCase.Source, fileBreak, listBreak, optionBreak), isNewFile);
+            isNewFile = false;
+            var document = await WorkspaceManager.GetDocumentAsync(path, CT);
+            var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
 
-         var result = await new OrganizeUsingsTool(WorkspaceManager).OrganizeUsingsAsync(
-            new FileScope { Path = path }, preview: false, cancellationToken: CT);
+            var written = await OrganizeAsync(path);
 
-         Assert.True(result.Data.Applied);
-         Assert.Equal(1, result.Data.FilesChanged);
-         Assert.Equal(0, result.Data.TotalUsingsRemoved);
-         var written = await File.ReadAllTextAsync(path, CT);
-         Assert.Equal(Expand(testCase.Expected, fileBreak, listBreak), written);
-         Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
+            Assert.Equal(Expand(testCase.Expected, fileBreak, listBreak, optionBreak), written);
+            Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
+         }
+      }
+   }
+
+   [Theory]
+   [MemberData(nameof(SharedLineOrganizeCaseNames))]
+   public async Task UsingTools_ListLineBreak_OrganizeUsings_SharedLine_RoslynKeepsOutput(string name)
+   {
+      var testCase = SharedLineOrganizeCases[name];
+      var isNewFile = true;
+      foreach (var (endOfLine, optionBreak) in EndOfLines)
+      {
+         await UseEditorConfigAsync(testCase.SeparateGroups, endOfLine);
+         foreach (var (fileBreak, listBreak) in LineBreaks)
+         {
+            var path = await WriteSourceAsync(
+               TargetPath, Expand(testCase.Source, fileBreak, listBreak, optionBreak), isNewFile);
+            isNewFile = false;
+
+            var written = await OrganizeAsync(path);
+
+            Assert.Equal(Expand(testCase.Expected, fileBreak, listBreak, optionBreak), written);
+            var document = await WorkspaceManager.GetDocumentAsync(path, CT);
+            var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
+            Assert.Equal(written, (await roslynOrganized.GetTextAsync(CT)).ToString());
+         }
       }
    }
 
@@ -196,23 +305,26 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
    public async Task UsingTools_ListLineBreak_AddUsing_RoslynKeepsOutput(string name)
    {
       var testCase = AddCases[name];
-      await UseEditorConfigAsync(testCase.SeparateGroups);
-
-      for (var i = 0; i < LineBreaks.Length; i++)
+      var isNewFile = true;
+      foreach (var (endOfLine, optionBreak) in EndOfLines)
       {
-         var (fileBreak, listBreak) = LineBreaks[i];
-         var source = Expand(testCase.Source, fileBreak, listBreak);
-         var path = await WriteSourceAsync(TargetPath, source, isNewFile: i == 0);
+         await UseEditorConfigAsync(testCase.SeparateGroups, endOfLine);
+         foreach (var (fileBreak, listBreak) in LineBreaks)
+         {
+            var path = await WriteSourceAsync(
+               TargetPath, Expand(testCase.Source, fileBreak, listBreak, optionBreak), isNewFile);
+            isNewFile = false;
 
-         var result = await new AddUsingTool(WorkspaceManager).AddUsingAsync(path, "Beta", preview: false, CT);
+            var result = await new AddUsingTool(WorkspaceManager).AddUsingAsync(path, "Beta", preview: false, CT);
 
-         Assert.True(result.Data.Added);
-         Assert.True(result.Data.Applied);
-         var written = await File.ReadAllTextAsync(path, CT);
-         Assert.Equal(Expand(testCase.Expected, fileBreak, listBreak), written);
-         var document = await WorkspaceManager.GetDocumentAsync(path, CT);
-         var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
-         Assert.Equal(written, (await roslynOrganized.GetTextAsync(CT)).ToString());
+            Assert.True(result.Data.Added);
+            Assert.True(result.Data.Applied);
+            var written = await File.ReadAllTextAsync(path, CT);
+            Assert.Equal(Expand(testCase.Expected, fileBreak, listBreak, optionBreak), written);
+            var document = await WorkspaceManager.GetDocumentAsync(path, CT);
+            var roslynOrganized = await Formatter.OrganizeImportsAsync(document, CT);
+            Assert.Equal(written, (await roslynOrganized.GetTextAsync(CT)).ToString());
+         }
       }
    }
 
@@ -228,7 +340,7 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
       await UseEditorConfigAsync(separateGroups: true);
       var path = await WriteSourceAsync(
          TargetPath,
-         Expand(FileSource("using System.Linq;\nusing Zeta;~using System.Text;~\n"), fileBreak, listBreak),
+         Expand(FileSource("using System.Linq;\nusing Zeta;~using System.Text;~\n"), fileBreak, listBreak, "\n"),
          isNewFile: true);
 
       var result = await new OrganizeUsingsTool(WorkspaceManager).OrganizeUsingsAsync(
@@ -238,17 +350,32 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
       Assert.Equal(1, result.Data.FilesChanged);
       Assert.Equal(1, result.Data.TotalUsingsRemoved);
       Assert.Equal(
-         Expand(FileSource("using System.Text;~~using Zeta;~\n"), fileBreak, listBreak),
+         Expand(FileSource("using System.Text;~~using Zeta;~\n"), fileBreak, listBreak, "\n"),
          await File.ReadAllTextAsync(path, CT));
    }
 
-   private static string Expand(string template, string fileBreak, string listBreak) =>
+   private static string Expand(string template, string fileBreak, string listBreak, string optionBreak) =>
       string.Concat(template.Select(c => c switch
       {
          '\n' => fileBreak,
          '~' => listBreak,
+         '^' => optionBreak,
          _ => c.ToString(),
       }));
+
+   /// <summary>
+   /// Organizes the usings of the file, which change without a using removed, and returns the text written.
+   /// </summary>
+   private async Task<string> OrganizeAsync(string path)
+   {
+      var result = await new OrganizeUsingsTool(WorkspaceManager).OrganizeUsingsAsync(
+         new FileScope { Path = path }, preview: false, cancellationToken: CT);
+
+      Assert.True(result.Data.Applied);
+      Assert.Equal(1, result.Data.FilesChanged);
+      Assert.Equal(0, result.Data.TotalUsingsRemoved);
+      return await File.ReadAllTextAsync(path, CT);
+   }
 
    private static string FileSource(string usings) => usings + """
       namespace CoreTestProject.ListLineBreak;
@@ -278,7 +405,8 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
    /// <summary>
    /// Writes the .editorconfig and adds it to CoreTestProject, as a load of the solution would.
    /// </summary>
-   private async Task UseEditorConfigAsync(bool separateGroups)
+   /// <param name="endOfLine">The value of end_of_line, or null to leave it unset.</param>
+   private async Task UseEditorConfigAsync(bool separateGroups, string? endOfLine = null)
    {
       var path = GetCoreTestProjectPath("ListLineBreak/.editorconfig");
       var text = $"""
@@ -287,13 +415,16 @@ public class UsingToolsListLineBreakTests : IsolatedProjectTestBase
          [*.cs]
          dotnet_sort_system_directives_first = true
          dotnet_separate_import_directive_groups = {(separateGroups ? "true" : "false")}
+         {(endOfLine is null ? "" : $"end_of_line = {endOfLine}")}
 
          """;
       await File.WriteAllTextAsync(path, text, CT);
       using var writeLock = await WorkspaceManager.WriteLock.AcquireAsync(CT);
       var project = Assert.Single(WorkspaceManager.EnsureSolutionLoaded().Projects, p => p.Name == "CoreTestProject");
-      WorkspaceManager.UpdateSolution(
-         project.AddAnalyzerConfigDocument(".editorconfig", SourceText.From(text), filePath: path).Project.Solution);
+      var existing = project.AnalyzerConfigDocuments.SingleOrDefault(d => d.FilePath == path);
+      WorkspaceManager.UpdateSolution(existing is null
+         ? project.AddAnalyzerConfigDocument(".editorconfig", SourceText.From(text), filePath: path).Project.Solution
+         : project.Solution.WithAnalyzerConfigDocumentText(existing.Id, SourceText.From(text)));
    }
 
    /// <summary>
