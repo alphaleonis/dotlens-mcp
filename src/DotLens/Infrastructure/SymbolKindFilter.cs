@@ -21,7 +21,12 @@ public enum SymbolKindFilter
    Property,
    Field,
    Event,
-   Constructor
+   Constructor,
+
+   // New values go last, because clients may send a kind as its integer value.
+
+   /// <summary>A C# 14 extension block. Its members match Method or Property.</summary>
+   Extension
 }
 
 /// <summary>

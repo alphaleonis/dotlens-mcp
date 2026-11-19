@@ -39,6 +39,7 @@ public static class SymbolFilterHelper
          SymbolKindFilter.Struct => symbol is INamedTypeSymbol { TypeKind: TypeKind.Struct },
          SymbolKindFilter.Enum => symbol is INamedTypeSymbol { TypeKind: TypeKind.Enum },
          SymbolKindFilter.Delegate => symbol is INamedTypeSymbol { TypeKind: TypeKind.Delegate },
+         SymbolKindFilter.Extension => symbol is INamedTypeSymbol { TypeKind: TypeKind.Extension },
 
          // Member kinds
          SymbolKindFilter.Method => symbol is IMethodSymbol { MethodKind: MethodKind.Ordinary or MethodKind.ExplicitInterfaceImplementation },
@@ -47,7 +48,7 @@ public static class SymbolFilterHelper
          SymbolKindFilter.Event => symbol.Kind == SymbolKind.Event,
          SymbolKindFilter.Constructor => symbol is IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor },
 
-         _ => false
+         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter, $"Unknown symbol kind filter: {filter}")
       };
    }
 

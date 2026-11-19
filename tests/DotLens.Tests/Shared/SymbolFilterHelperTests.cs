@@ -1,3 +1,4 @@
+using DotLens.Infrastructure;
 using DotLens.Tools.Shared;
 using FakeItEasy;
 using Microsoft.CodeAnalysis;
@@ -16,5 +17,16 @@ public class SymbolFilterHelperTests
 
       Assert.Throws<ArgumentOutOfRangeException>(() =>
          SymbolFilterHelper.MatchesModifiers(fakeSymbol, [invalidFilter]));
+   }
+
+   [Fact]
+   public void MatchesKind_InvalidKindFilter_ThrowsArgumentOutOfRange()
+   {
+      var fakeSymbol = A.Fake<INamedTypeSymbol>();
+
+      var invalidFilter = (SymbolKindFilter)999;
+
+      Assert.Throws<ArgumentOutOfRangeException>(() =>
+         SymbolFilterHelper.MatchesKind(fakeSymbol, invalidFilter));
    }
 }

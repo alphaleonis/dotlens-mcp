@@ -1862,6 +1862,94 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.DoesNotContain(result.Data.Items, s => s is ClassSymbolResponse { Name.Length: 0 });
    }
 
+   [Fact]
+   public async Task SearchSymbols_KindFilter_Extension_ListsExactlyTheExtensionBlocks()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("*", kind: SymbolKindFilter.Extension, maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal<SymbolResponse>(AllExtensionBlocks, result.Data.Items);
+   }
+
+   [Fact]
+   public async Task FindSymbols_KindFilter_Extension_ListsExactlyTheExtensionBlocks()
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.FindSymbolsAsync(kinds: [SymbolKindFilter.Extension], maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal<SymbolResponse>(AllExtensionBlocks, result.Data.Items);
+   }
+
+   [Fact]
+   public async Task FindSymbols_KindFilter_ExtensionWithName_ListsTheBlocksWithThatHeader()
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.FindSymbolsAsync("extension(Tape)", kinds: [SymbolKindFilter.Extension], cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal<SymbolResponse>(AllExtensionBlocks.Where(b => b.Name == "extension(Tape)"), result.Data.Items);
+   }
+
+   /// <summary>
+   /// The filter holds every kind but Extension, so the members of a block, the class that holds the block and a class
+   /// of classic extension methods each match a kind of their own.
+   /// </summary>
+   [Fact]
+   public async Task FindSymbols_KindFilter_ExtensionExcluded_ListsMembersAndHoldersButNoBlock()
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+      SymbolKindFilter[] otherKinds = [.. Enum.GetValues<SymbolKindFilter>().Where(k => k != SymbolKindFilter.Extension)];
+
+      var result = await tool.FindSymbolsAsync(kinds: otherKinds, maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.DoesNotContain(result.Data.Items, s => s is ExtensionSymbolResponse);
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "TextExtensions", 3),
+            (typeof(PropertySymbolResponse), "IsShout", 7),
+            (typeof(MethodSymbolResponse), "Whisper", 9),
+            (typeof(MethodSymbolResponse), "Blank", 11),
+            (typeof(PropertySymbolResponse), "IsEven", 16),
+            (typeof(MethodSymbolResponse), "Doubled", 18),
+            (typeof(PropertySymbolResponse), "IsEmpty", 23),
+            (typeof(ClassSymbolResponse), "TextUsage", 27),
+            (typeof(MethodSymbolResponse), "Quiet", 29),
+         ],
+         SymbolsIn(result.Data.Items, "ExtensionMembers.cs"));
+      Assert.Equal(
+         [
+            (typeof(ClassSymbolResponse), "WordExtensions", 3),
+            (typeof(MethodSymbolResponse), "Vowels", 5),
+            (typeof(MethodSymbolResponse), "Shout", 7),
+         ],
+         SymbolsIn(result.Data.Items, "ExtensionContainers.cs").Where(s => s.Line <= 8));
+   }
+
+   [Fact]
+   public async Task FindUnusedCode_KindFilter_Extension_IsRejected()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var ex = await Assert.ThrowsAsync<ToolException>(
+         () => tool.FindUnusedCodeAsync(symbolKindFilter: SymbolKindFilter.Extension, cancellationToken: CT));
+
+      Assert.Equal(ErrorCodes.InvalidParameter, ex.Code);
+      Assert.Equal("find_unused_code reports no extension blocks, only their unused members.", ex.Message);
+      Assert.Equal("Filter by method or property to find the unused members of extension blocks.", ex.Hint);
+   }
+
+   private static List<(Type Kind, string Name, int Line)> SymbolsIn(IEnumerable<SymbolResponse> symbols, string fileName) =>
+      [.. symbols
+         .Where(s => s.Location?.FilePath == fileName)
+         .Select(s => (Kind: s.GetType(), s.Name, Line: s.Location?.Line ?? 0))
+         .OrderBy(s => s.Line)];
+
    /// <summary>
    /// Each symbol declared in the fixture, as its file, line, column and name, in ordinal order. A record's and a
    /// delegate's compiler-generated members, a union's Value property, the global namespace and the implementation

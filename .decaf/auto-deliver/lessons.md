@@ -118,3 +118,7 @@
 ## Directive-split usings — zp7k, s5uh (2026-11-19)
 - Asking the implementer to run a table of input shapes through Roslyn before coding worked: one review, no correctness findings, against three to five rounds for dotlens-2hzp in the same file.
 - Per-case solution reloads in theory tests cost minutes; a class fixture with a before/after state check kept isolation at a fraction of the time.
+
+## dotlens-ljme — Extension kind filter (2026-11-19)
+- A one-value enum addition passed review in one pass when the brief named every consumer of the enum to check (find_references) and asked whether the search path even offers the symbol to the filter.
+- Adding an enum value mid-list renumbers the integer values System.Text.Json's string-enum converter still accepts; append new values to enums that tools take as parameters.

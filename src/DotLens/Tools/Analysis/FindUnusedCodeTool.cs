@@ -57,7 +57,7 @@ public class FindUnusedCodeTool
       bool includePrivate = true,
       [Description("Include internal members (default: false).")]
       bool includeInternal = false,
-      [Description("Filter by symbol kind.")]
+      [Description("Filter by symbol kind. Extension blocks are never reported, so extension is an error; use method or property for their members.")]
       SymbolKindFilter? symbolKindFilter = null,
       [Description("Filter by modifiers (AND logic: symbol must have ALL specified). Examples: [Static], [Abstract].")]
       ModifierFilter[]? modifiers = null,
@@ -70,6 +70,14 @@ public class FindUnusedCodeTool
       int maxResults = 50,
       CancellationToken cancellationToken = default)
    {
+      if (symbolKindFilter == SymbolKindFilter.Extension)
+      {
+         throw new ToolException(
+            ErrorCodes.InvalidParameter,
+            "find_unused_code reports no extension blocks, only their unused members.",
+            "Filter by method or property to find the unused members of extension blocks.");
+      }
+
       var solution = _workspaceManager.EnsureSolutionLoaded();
       var usage = new UsageAnalysis(solution, new FrameworkEntryPoints(entryPointAttributes));
       var unusedSymbols = new List<SymbolResponse>();

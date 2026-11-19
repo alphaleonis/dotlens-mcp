@@ -1,16 +1,12 @@
 {
-  "plan": "dotlens-t76f",
+  "plan": "dotlens-ljme",
   "tracker": "nibs",
-  "integration_branch": "deliver/dotlens-t76f",
+  "integration_branch": "deliver/dotlens-ljme",
   "current_phase": null,
   "step": "SELECT",
-  "scope": [
-    "type:bug under dotlens-t76f, including bugs filed during this run"
-  ],
   "review_spec": "bugs",
-  "started_at": "2026-11-16T17:47:57Z",
-  "updated_at": "2026-11-19T14:34:45Z",
-  "note": "Complete 2026-11-19 (second run): no bugs remain under dotlens-t76f. Open questions filed as dotlens-5he7. This run: w6b1 a5f2dce, var9+qx4f 0c45e9e, 2hzp 60c2a04, 0zzn 7430e81, nqd2 15822c9, mudz 1fed1c3, eyrn 398f9b0, zp7k+s5uh 08625a5. Earlier run's open questions: dotlens-0vlu. Out-of-scope ready items: dotlens-ljme, dotlens-r1yu (features). One test process at a time; full suites with --max-threads 8; group bugs by area, full suite once per group by the conductor.",
-  "groups": [],
+  "started_at": "2026-11-19T14:45:38Z",
+  "updated_at": "2026-11-19T14:59:19Z",
+  "note": "Complete 2026-11-19: dotlens-ljme (SymbolKindFilter.Extension) delivered on deliver/dotlens-ljme, branched from deliver/dotlens-t76f. Open questions filed as dotlens-embu (draft, 1 confirm). .nibs changes (ljme close, embu) left uncommitted in the .nibs repo, as earlier runs did.",
   "exit": "complete"
 }
