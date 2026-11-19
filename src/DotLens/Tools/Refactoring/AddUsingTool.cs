@@ -26,7 +26,8 @@ public class AddUsingTool
    [Description("""
       Add a using directive to a file. Skips if the namespace is already imported, global usings included.
       Adds it where the file keeps its usings, inside the namespace declaration when they are there.
-      Sorts the usings (System.* first).
+      Sorts the usings as the IDE's Organize Usings does, following the .editorconfig options for System first and
+      blank lines between groups.
       """)]
    public async Task<ToolResult<AddUsingResponse>> AddUsingAsync(
       [Description("Path to source file (absolute or relative to solution directory)")] string filePath,
@@ -102,7 +103,7 @@ public class AddUsingTool
          return AlreadyExists(@namespace, $"Namespace '{@namespace}' is already imported by a global using");
       }
 
-      var newLine = await UsingDirectiveLayout.GetNewLineAsync(document, cancellationToken);
+      var options = await UsingDirectiveLayout.GetOptionsAsync(document, cancellationToken);
       var name = requested;
 
       // A using inside a namespace declaration looks its name up in that namespace first.
@@ -120,9 +121,9 @@ public class AddUsingTool
 
       var newUsing = SyntaxFactory.UsingDirective(
             SyntaxFactory.ParseName(name).WithLeadingTrivia(SyntaxFactory.Space))
-         .WithTrailingTrivia(SyntaxFactory.EndOfLine(newLine));
+         .WithTrailingTrivia(SyntaxFactory.EndOfLine(options.NewLine));
 
-      var newRoot = UsingDirectiveLayout.Add(compilationUnit, newUsing, newLine);
+      var newRoot = UsingDirectiveLayout.Add(compilationUnit, newUsing, options);
       var newText = newRoot.ToFullString();
 
       if (preview)

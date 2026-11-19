@@ -225,8 +225,8 @@ public class OrganizeUsingsTool
       var unused = UsingDirectiveLayout.GetAllUsings(compilationUnit)
           .Where(u => spansToRemove.Any(span => u.Span.IntersectsWith(span)))
           .ToHashSet();
-      var newLine = await UsingDirectiveLayout.GetNewLineAsync(document, cancellationToken);
-      var newRoot = UsingDirectiveLayout.Organize(compilationUnit, u => !unused.Contains(u), newLine);
+      var options = await UsingDirectiveLayout.GetOptionsAsync(document, cancellationToken);
+      var newRoot = UsingDirectiveLayout.Organize(compilationUnit, u => !unused.Contains(u), options);
 
       return (document.WithSyntaxRoot(newRoot), originalCount, unused.Count, originalCount - unused.Count);
    }

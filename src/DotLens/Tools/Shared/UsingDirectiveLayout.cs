@@ -1,5 +1,6 @@
 using System.Globalization;
 using DotLens.Infrastructure;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Formatting;
 
 namespace DotLens.Tools.Shared;
@@ -28,14 +29,42 @@ namespace DotLens.Tools.Shared;
 /// The scope chain is the compilation unit, then each namespace declaration that is the only member of the one before.
 /// The usings of every list in the chain reach all the code of the file.
 /// </para>
+/// <para>
+/// When the entries of a compilation unit or namespace declaration are out of order and no directive splits them into
+/// runs, each entry below the file header loses the line breaks that start its leading trivia, as Roslyn's Organize
+/// Imports does when it sorts. A line that holds only whitespace stays. When the options separate groups, a blank line
+/// goes above each using that starts a group and has no line break in its leading trivia, as Roslyn puts it there.
+/// </para>
 /// </remarks>
 internal static class UsingDirectiveLayout
 {
+   private const string SortSystemFirstKey = "dotnet_sort_system_directives_first";
+   private const string SeparateGroupsKey = "dotnet_separate_import_directive_groups";
+
+   /// <summary>
+   /// Returns the layout options of the document: its line break, and the two using options of its .editorconfig.
+   /// </summary>
+   public static async Task<UsingLayoutOptions> GetOptionsAsync(Document document, CancellationToken cancellationToken)
+   {
+      var tree = await document.GetSyntaxTreeAsync(cancellationToken)
+         ?? throw new InvalidOperationException($"The document has no syntax tree: {document.FilePath}");
+      var config = document.Project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GetOptions(tree);
+      return new UsingLayoutOptions(
+         await GetNewLineAsync(document, cancellationToken),
+         ReadBoolean(config, SortSystemFirstKey, defaultValue: true),
+         ReadBoolean(config, SeparateGroupsKey, defaultValue: false));
+   }
+
+   // Roslyn takes a value that bool.TryParse rejects, such as one with a severity, as the default, as
+   // UsingToolsEditorConfigTests pins.
+   private static bool ReadBoolean(AnalyzerConfigOptions config, string key, bool defaultValue) =>
+      config.TryGetValue(key, out var value) && bool.TryParse(value, out var parsed) ? parsed : defaultValue;
+
    /// <summary>
    /// Returns the line break that the document's text uses.
    /// </summary>
    /// <returns>The line break that ends the first line, or the document's formatting option when the text has one line.</returns>
-   public static async Task<string> GetNewLineAsync(Document document, CancellationToken cancellationToken)
+   private static async Task<string> GetNewLineAsync(Document document, CancellationToken cancellationToken)
    {
       var text = await document.GetTextAsync(cancellationToken);
       if (text.Lines.Count > 1)
@@ -71,12 +100,12 @@ internal static class UsingDirectiveLayout
    /// using list of <paramref name="unit"/>. Sorts every extern alias list within each run too.
    /// </summary>
    /// <param name="keep">Called with the usings of <paramref name="unit"/> itself.</param>
-   /// <param name="newLine">The line break that ends a using whose line it shared with what no longer follows it.</param>
    public static CompilationUnitSyntax Organize(
       CompilationUnitSyntax unit,
       Func<UsingDirectiveSyntax, bool> keep,
-      string newLine)
+      UsingLayoutOptions options)
    {
+      var usingList = UsingList(options);
       var containers = GetContainers(unit).Where(c => GetUsings(c).Count > 0 || GetExterns(c).Count > 0).ToList();
       var markers = containers.ToDictionary(c => c, _ => new SyntaxAnnotation());
       var removedMarker = new SyntaxAnnotation();
@@ -93,16 +122,19 @@ internal static class UsingDirectiveLayout
       foreach (var marker in markers.Values)
       {
          var container = marked.GetAnnotatedNodes(marker).Single();
+         bool IsKept(UsingDirectiveSyntax u) => !u.HasAnnotation(removedMarker);
+         var externRuns = SplitRuns(GetExterns(container), _ => true);
+         var keepBlankLines = KeepsBlankLines(externRuns, SplitRuns(GetUsings(container), IsKept), usingList.Order);
          if (GetExterns(container).Count > 0)
          {
-            marked = Place(marked, container, ExternList, SplitRuns(GetExterns(container), _ => true), newLine);
+            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, options.NewLine);
             container = marked.GetAnnotatedNodes(marker).Single();
          }
 
          if (GetUsings(container).Count > 0)
          {
-            var runs = SplitRuns(GetUsings(container), u => !u.HasAnnotation(removedMarker));
-            marked = Place(marked, container, UsingList, runs, newLine);
+            var runs = SplitRuns(GetUsings(container), IsKept);
+            marked = Place(marked, container, usingList, runs, keepBlankLines, options.NewLine);
          }
       }
 
@@ -119,21 +151,22 @@ internal static class UsingDirectiveLayout
    /// at file level, below the file header.
    /// </remarks>
    /// <param name="newUsing">The using to add, without leading trivia. It takes the indentation of the first using.</param>
-   /// <param name="newLine">
-   /// The line break of the blank line that follows a using added to a file without usings, and of a using whose line it
-   /// shared with what no longer follows it.
-   /// </param>
    /// <exception cref="ToolException">A #define or #undef inside an #if block follows the place for the new using.</exception>
-   public static CompilationUnitSyntax Add(CompilationUnitSyntax unit, UsingDirectiveSyntax newUsing, string newLine)
+   public static CompilationUnitSyntax Add(
+      CompilationUnitSyntax unit,
+      UsingDirectiveSyntax newUsing,
+      UsingLayoutOptions options)
    {
       var regions = new ConditionalRegions(unit);
       if (GetTargetList(unit) is not { } container)
-         return AddToFileWithoutUsings(unit, newUsing, newLine, regions);
+         return AddToFileWithoutUsings(unit, newUsing, options, regions);
 
+      var usingList = UsingList(options);
       var usings = GetUsings(container);
       var codeRegions = regions.EnclosingCode(container, usings[^1].GetLastToken().GetNextToken(includeZeroWidth: true));
       var indented = newUsing.WithLeadingTrivia(GetIndentation(usings[0].GetLeadingTrivia()));
       var runs = SplitRuns(usings, _ => true);
+      var keepBlankLines = KeepsBlankLines(SplitRuns(GetExterns(container), _ => true), runs, usingList.Order);
       if (runs.Find(r => regions.At(r.Start).IsSubsetOf(codeRegions)) is { } target)
       {
          target.Entries.Add((indented, -1));
@@ -148,7 +181,7 @@ internal static class UsingDirectiveLayout
          runs.Insert(0, new Run<UsingDirectiveSyntax>(header, [(indented, -1)], runs[0].Start));
       }
 
-      return Place(unit, container, UsingList, runs, newLine);
+      return Place(unit, container, usingList, runs, keepBlankLines, options.NewLine);
    }
 
    /// <summary>
@@ -165,15 +198,24 @@ internal static class UsingDirectiveLayout
    /// One kind of list in a compilation unit or namespace declaration, and the order its entries sort in.
    /// </summary>
    /// <param name="IsFirst">Whether the list of a container comes first in it, with no extern alias above it.</param>
+   /// <param name="StartsGroup">
+   /// Whether the second of two adjacent entries starts a group, or null when no blank line separates groups. The first
+   /// entry of a list below extern aliases starts a group too.
+   /// </param>
    private sealed record EntryList<T>(
       Func<SyntaxNode, SyntaxList<T>> Get,
       Func<SyntaxNode, IEnumerable<T>, SyntaxNode> With,
       IComparer<T> Order,
-      Func<SyntaxNode, bool> IsFirst)
+      Func<SyntaxNode, bool> IsFirst,
+      Func<T, T, bool>? StartsGroup)
       where T : SyntaxNode;
 
-   private static readonly EntryList<UsingDirectiveSyntax> UsingList =
-      new(GetUsings, WithUsings, UsingComparer.Instance, c => GetExterns(c).Count == 0);
+   private static EntryList<UsingDirectiveSyntax> UsingList(UsingLayoutOptions options) => new(
+      GetUsings,
+      WithUsings,
+      new UsingComparer(options.SystemFirst),
+      c => GetExterns(c).Count == 0,
+      options.SeparateGroups ? UsingComparer.StartsGroup : null);
 
    // Roslyn's Organize Imports sorts extern aliases by name, with System not first.
    private static readonly EntryList<ExternAliasDirectiveSyntax> ExternList = new(
@@ -181,7 +223,8 @@ internal static class UsingDirectiveLayout
       WithExterns,
       Comparer<ExternAliasDirectiveSyntax>.Create(
          (x, y) => NameOrder.CompareText(x.Identifier.ValueText, y.Identifier.ValueText, systemFirst: false)),
-      _ => true);
+      _ => true,
+      StartsGroup: null);
 
    /// <param name="Lead">The trivia that stays at the start of the run, whether or not any of its entries remain.</param>
    /// <param name="Entries">
@@ -221,11 +264,13 @@ internal static class UsingDirectiveLayout
    /// Replaces the entries of <paramref name="list"/> in <paramref name="container"/> with the runs, each sorted, and
    /// keeps the lead of a run whose entries were all removed.
    /// </summary>
+   /// <param name="keepBlankLines">Whether the entries keep the blank lines above them.</param>
    private static CompilationUnitSyntax Place<T>(
       CompilationUnitSyntax root,
       SyntaxNode container,
       EntryList<T> list,
       List<Run<T>> runs,
+      bool keepBlankLines,
       string newLine)
       where T : SyntaxNode
    {
@@ -236,16 +281,38 @@ internal static class UsingDirectiveLayout
       {
          var run = runs[i];
          var atListStart = i > 0 && ordered.Count == 0 && pending.Count == 0 && list.IsFirst(container);
-         pending = pending.AddRange(atListStart || EndsWithBlankLine(pending) ? TrimLeadingBlankLines(run.Lead) : run.Lead);
 
-         var sorted = run.Entries.OrderBy(e => e.Entry, list.Order).ToList();
+         var lead = run.Lead;
+         var runEntries = run.Entries;
+
+         // Below extern aliases no file header exists, so a sort moves the lead with the entry it stood above.
+         if (i == 0 && !keepBlankLines && !list.IsFirst(container))
+         {
+            if (runEntries is [(var head, 0), ..])
+            {
+               var moved = head.WithLeadingTrivia(lead.AddRange(head.GetLeadingTrivia()));
+               runEntries = [(moved, 0), .. runEntries.Skip(1)];
+               lead = SyntaxTriviaList.Empty;
+            }
+            else
+            {
+               lead = TrimLeadingLineBreaks(lead);
+            }
+         }
+
+         pending = pending.AddRange(atListStart || EndsWithBlankLine(pending) ? TrimLeadingBlankLines(lead) : lead);
+
+         var sorted = runEntries.OrderBy(e => e.Entry, list.Order)
+            .Select(e => keepBlankLines ? e : e with { Entry = WithoutLeadingLineBreaks(e.Entry) })
+            .ToList();
          if (sorted.Count == 0)
             continue;
 
          var first = sorted[0].Entry;
          sorted[0] = sorted[0] with
          {
-            Entry = first.WithLeadingTrivia(pending.AddRange(TrimLeadingBlankLines(first.GetLeadingTrivia()))),
+            Entry = first.WithLeadingTrivia(pending.AddRange(
+               keepBlankLines ? TrimLeadingBlankLines(first.GetLeadingTrivia()) : first.GetLeadingTrivia())),
          };
          pending = SyntaxTriviaList.Empty;
          ordered.AddRange(sorted);
@@ -270,6 +337,12 @@ internal static class UsingDirectiveLayout
          if (index >= 0 && follower != index + 1 && !EndsWithLineBreak(trailing))
             current = current.WithTrailingTrivia(TrimTrailingWhitespace(trailing).Add(SyntaxFactory.EndOfLine(newLine)));
 
+         if (list.StartsGroup is { } startsGroup
+             && (i == 0 ? !list.IsFirst(container) : startsGroup(placed[i - 1], current)))
+         {
+            current = current.WithLeadingTrivia(SeparateGroup(current.GetLeadingTrivia(), newLine));
+         }
+
          placed.Add(current);
       }
 
@@ -292,9 +365,10 @@ internal static class UsingDirectiveLayout
    private static CompilationUnitSyntax AddToFileWithoutUsings(
       CompilationUnitSyntax unit,
       UsingDirectiveSyntax newUsing,
-      string newLine,
+      UsingLayoutOptions options,
       ConditionalRegions regions)
    {
+      var newLine = options.NewLine;
       var next = unit.Externs.Count > 0
          ? unit.Externs[^1].GetLastToken().GetNextToken(includeZeroWidth: true)
          : unit.GetFirstToken(includeZeroWidth: true);
@@ -305,6 +379,8 @@ internal static class UsingDirectiveLayout
       EnsureNoSymbolDirective(nextTrivia);
 
       var placed = newUsing.WithLeadingTrivia(header.AddRange(newUsing.GetLeadingTrivia()));
+      if (options.SeparateGroups && unit.Externs.Count > 0)
+         placed = placed.WithLeadingTrivia(SeparateGroup(placed.GetLeadingTrivia(), newLine));
       if (!next.IsKind(SyntaxKind.EndOfFileToken) || nextTrivia.Any(t => !IsBlank(t)))
          placed = placed.WithTrailingTrivia(placed.GetTrailingTrivia().Add(SyntaxFactory.EndOfLine(newLine)));
 
@@ -338,6 +414,42 @@ internal static class UsingDirectiveLayout
             "Add the using with edit_file at the place it belongs");
       }
    }
+
+   /// <summary>
+   /// Returns the leading trivia of an entry that starts a group, with a line break in front when it holds none.
+   /// </summary>
+   private static SyntaxTriviaList SeparateGroup(SyntaxTriviaList leading, string newLine) =>
+      leading.Any(t => t.IsKind(SyntaxKind.EndOfLineTrivia))
+         ? leading
+         : leading.Insert(0, SyntaxFactory.EndOfLine(newLine));
+
+   private static T WithoutLeadingLineBreaks<T>(T entry)
+      where T : SyntaxNode =>
+      entry.WithLeadingTrivia(TrimLeadingLineBreaks(entry.GetLeadingTrivia()));
+
+   private static SyntaxTriviaList TrimLeadingLineBreaks(SyntaxTriviaList trivia) =>
+      SyntaxFactory.TriviaList(trivia.SkipWhile(t => t.IsKind(SyntaxKind.EndOfLineTrivia)));
+
+   /// <summary>
+   /// Returns whether the entries of a container keep the line breaks above them. Roslyn removes them only from a list
+   /// that it sorts, and it does not sort a list that a directive splits.
+   /// </summary>
+   /// <remarks>
+   /// Roslyn takes the extern aliases and usings of a container as one list, so a directive above the first using
+   /// splits it when extern aliases come before.
+   /// </remarks>
+   private static bool KeepsBlankLines(
+      List<Run<ExternAliasDirectiveSyntax>> externRuns,
+      List<Run<UsingDirectiveSyntax>> usingRuns,
+      IComparer<UsingDirectiveSyntax> usingOrder) =>
+      externRuns.Count > 1
+      || usingRuns.Count > 1
+      || (externRuns.Count > 0 && usingRuns.Count > 0 && usingRuns[0].Lead.Any(t => t.IsDirective))
+      || (IsInOrder(externRuns, ExternList.Order) && IsInOrder(usingRuns, usingOrder));
+
+   private static bool IsInOrder<T>(List<Run<T>> runs, IComparer<T> order)
+      where T : SyntaxNode =>
+      runs.All(r => r.Entries.Zip(r.Entries.Skip(1)).All(p => order.Compare(p.First.Entry, p.Second.Entry) <= 0));
 
    private static bool HasSymbolDirective(IEnumerable<SyntaxTrivia> trivia) =>
       trivia.Any(t => t.IsKind(SyntaxKind.DefineDirectiveTrivia) || t.IsKind(SyntaxKind.UndefDirectiveTrivia));
@@ -475,9 +587,21 @@ internal static class UsingDirectiveLayout
    /// Alias usings sort by alias name, then by target. Every other using sorts by name, and a global:: qualifier does not
    /// count as part of the name.
    /// </remarks>
-   private sealed class UsingComparer : IComparer<UsingDirectiveSyntax>
+   /// <param name="systemFirst">Whether a name that starts with System, and the alias name System, sort first.</param>
+   private sealed class UsingComparer(bool systemFirst) : IComparer<UsingDirectiveSyntax>
    {
-      public static readonly UsingComparer Instance = new();
+      /// <summary>
+      /// Returns whether a blank line separates two adjacent usings as Roslyn's Organize Imports separates groups.
+      /// </summary>
+      /// <remarks>
+      /// The usings are in different groups when they are of different kinds, or when both are namespace usings whose
+      /// names start with different identifiers. Identifiers compare by value, with case, and global:: counts as the
+      /// identifier global. Being global does not count.
+      /// </remarks>
+      public static bool StartsGroup(UsingDirectiveSyntax previous, UsingDirectiveSyntax current) =>
+         GetKind(previous) != GetKind(current)
+         || (GetKind(current) == 0
+            && previous.NamespaceOrType.GetFirstToken().ValueText != current.NamespaceOrType.GetFirstToken().ValueText);
 
       public int Compare(UsingDirectiveSyntax? x, UsingDirectiveSyntax? y)
       {
@@ -487,18 +611,18 @@ internal static class UsingDirectiveLayout
          // The compiler requires the global usings of a file to precede its other usings.
          var compared = IsGlobal(y).CompareTo(IsGlobal(x));
          if (compared == 0)
-            compared = GetGroup(x).CompareTo(GetGroup(y));
+            compared = GetKind(x).CompareTo(GetKind(y));
          if (compared != 0)
             return compared;
 
          if (x.Alias is { } xAlias && y.Alias is { } yAlias)
          {
             compared = NameOrder.CompareText(
-               xAlias.Name.Identifier.ValueText, yAlias.Name.Identifier.ValueText, systemFirst: true);
+               xAlias.Name.Identifier.ValueText, yAlias.Name.Identifier.ValueText, systemFirst);
             return compared != 0 ? compared : NameOrder.CompareAliasTargets(x.NamespaceOrType, y.NamespaceOrType);
          }
 
-         return NameOrder.CompareUsingNames(x.NamespaceOrType, y.NamespaceOrType);
+         return NameOrder.CompareUsingNames(x.NamespaceOrType, y.NamespaceOrType, systemFirst);
       }
 
       private static bool IsGlobal(UsingDirectiveSyntax usingDirective) =>
@@ -508,7 +632,7 @@ internal static class UsingDirectiveLayout
       /// Returns 0 for a namespace using, 1 for a static using and 2 for an alias using. A static using that declares an
       /// alias counts as an alias using.
       /// </summary>
-      private static int GetGroup(UsingDirectiveSyntax usingDirective) =>
+      private static int GetKind(UsingDirectiveSyntax usingDirective) =>
          usingDirective.Alias is not null ? 2 : usingDirective.StaticKeyword.IsKind(SyntaxKind.None) ? 0 : 1;
    }
 
@@ -531,11 +655,12 @@ internal static class UsingDirectiveLayout
       private static readonly CompareInfo Invariant = CultureInfo.InvariantCulture.CompareInfo;
 
       /// <summary>
-      /// Compares the names of two usings that declare no alias: System first, and a global:: qualifier left out.
+      /// Compares the names of two usings that declare no alias, with a global:: qualifier left out.
       /// </summary>
-      public static int CompareUsingNames(TypeSyntax x, TypeSyntax y) =>
+      /// <param name="systemFirst">Whether the identifier System sorts first in the first part.</param>
+      public static int CompareUsingNames(TypeSyntax x, TypeSyntax y, bool systemFirst) =>
          x is NameSyntax xName && y is NameSyntax yName
-            ? CompareParts(GetParts(xName, skipGlobal: true), GetParts(yName, skipGlobal: true), systemFirst: true)
+            ? CompareParts(GetParts(xName, skipGlobal: true), GetParts(yName, skipGlobal: true), systemFirst)
             : CompareTypes(x, y);
 
       /// <summary>
@@ -767,3 +892,13 @@ internal static class UsingDirectiveLayout
       }
    }
 }
+
+/// <summary>
+/// The layout of the usings of one document.
+/// </summary>
+/// <param name="NewLine">
+/// The line break of an added blank line, and of a using whose line it shared with what no longer follows it.
+/// </param>
+/// <param name="SystemFirst">Whether usings of System and its namespaces sort before the others.</param>
+/// <param name="SeparateGroups">Whether a blank line separates groups of usings.</param>
+internal sealed record UsingLayoutOptions(string NewLine, bool SystemFirst, bool SeparateGroups);
