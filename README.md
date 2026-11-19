@@ -84,14 +84,17 @@ All options use the `DOTLENS_` prefix for environment variables:
 |---------------------|-------------|---------|-------|
 | `DOTLENS_SolutionPath` | Solution file (`.sln`/`.slnx`) or directory to search | None | - |
 | `DOTLENS_AutoLoadSolution` | Auto-detect solution from working directory | `true` | - |
-| `DOTLENS_LogLevel` | Logging verbosity | `Warning` | Verbose, Debug, Information, Warning, Error |
+| `DOTLENS_LogLevel` | Logging verbosity | `Warning` | Verbose, Debug, Information, Warning, Error, Fatal |
+| `DOTLENS_InstructionLevel` | Instructions the server sends to clients | `Detailed` | None, Brief, Detailed |
 | `DOTLENS_TimeoutSeconds` | Timeout for long-running operations | `30` | 1-600 |
 | `DOTLENS_LoadWaitTimeoutSeconds` | Seconds to wait for in-progress load before returning "loading" status | `5` | 1-60 |
+| `DOTLENS_MaxLoadTimeoutSeconds` | Seconds a solution load may take before it is canceled | `300` | 30-1800 |
 | `DOTLENS_MaxDiagnostics` | Maximum diagnostics to return | `100` | 1-10000 |
 | `DOTLENS_UseAbsolutePaths` | Use absolute paths instead of relative | `false` | - |
 | `DOTLENS_MaxCacheSize` | Maximum documents to cache | `500` | 1-10000 |
 | `DOTLENS_CacheExpirationMinutes` | Cache sliding expiration | `30` | 1-1440 |
 | `DOTLENS_EnableSemanticCache` | Enable document caching | `true` | - |
+| `DOTLENS_MaxSortableResults` | Maximum symbols a search collects to sort by name or kind | `10000` | 100-100000 |
 
 Options can also be set via command-line arguments: `dotlens --LogLevel=Debug`
 
@@ -107,7 +110,7 @@ DotLens automatically discovers and loads a solution **in the background** on st
 | Multiple solutions in working directory | Logs which were found; call `load_solution` to choose |
 | No solutions found | Call `load_solution` manually |
 
-If a tool is called before loading completes, it returns a "No solution loaded" error. If `load_solution` is called while auto-load is in progress, it waits up to `DOTLENS_LoadWaitTimeoutSeconds` (default 5s) and returns a "loading" status if still in progress. Use `health_check` to monitor loading progress.
+If a tool is called before loading completes, it returns an error that asks the agent to wait and retry. If `load_solution` is called while auto-load is in progress, it waits up to `DOTLENS_LoadWaitTimeoutSeconds` (default 5s) and returns a "loading" status if still in progress. Use `health_check` to monitor loading progress.
 
 Relative `SolutionPath` values are resolved relative to the working directory. Set `DOTLENS_AutoLoadSolution=false` to disable auto-discovery.
 
@@ -225,7 +228,7 @@ DotLens maintains an in-memory representation of your solution for fast queries.
 | Used Edit tool to modify .cs files | **Yes** |
 | Used Write tool to create new .cs files | **Yes** |
 | Deleted .cs files | **Yes** |
-| Used DotLens refactoring tools (rename, extract, etc.) | No (auto-updated) |
+| Used DotLens refactoring tools (rename_symbol, apply_code_action, etc.) | No (auto-updated) |
 | Used DotLens editing tools (edit_file, write_file) | No (auto-updated + returns diagnostics) |
 | Modified .csproj files | No (use `reload_solution` instead) |
 
@@ -269,7 +272,7 @@ This architecture allows the worker process to be killed and restarted to releas
 
 ## Requirements
 
-- [.NET 10.0 or later](https://dotnet.microsoft.com/download) SDK or Runtime
+- [.NET 10.0 SDK or later](https://dotnet.microsoft.com/download): `dotnet tool install` needs it, and DotLens loads solutions through its MSBuild
 - An MCP-compatible AI agent (e.g., [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Cursor](https://cursor.sh/), [VS Code + Copilot](https://code.visualstudio.com/))
 
 ## Contributing
@@ -286,27 +289,28 @@ dotnet test --project tests/DotLens.Tests/DotLens.Tests.csproj
 
 ### Adding New Tools
 
-Create or update a tool class in `src/DotLens/Tools/`:
+Create or update a tool class in `src/DotLens/Tools/`. A tool marked `[DotLensWorkerTool]` runs in the worker process, and the server forwards calls to it:
 
 ```csharp
 [McpServerToolType]
-public class YourTools
+[DotLensWorkerTool]
+public class YourTool
 {
-    private readonly IWorkspaceManager _workspace;
+   private readonly IReadOnlyWorkspace _workspace;
 
-    public YourTools(IWorkspaceManager workspace) => _workspace = workspace;
+   public YourTool(IReadOnlyWorkspace workspace) => _workspace = workspace;
 
-    [McpServerTool(Name = "your_tool", ReadOnly = true, OpenWorld = false)]
-    [Description("Description shown to AI.")]
-    public async Task<string> YourTool(
-        [Description("Param description")] string filePath,
-        [Description("Optional param")] int? maxResults = 50,
-        CancellationToken cancellationToken = default)
-    {
-        _workspace.EnsureSolutionLoaded();
-        // Your logic using _workspace.Solution, etc.
-        return ToolResponse.Success(new { /* results */ });
-    }
+   [McpServerTool(Name = "your_tool", ReadOnly = true, OpenWorld = false)]
+   [Description("Description shown to AI.")]
+   public async Task<ToolResult<YourToolResponse>> YourToolAsync(
+      CancellationToken cancellationToken,
+      [Description("Param description")] string filePath,
+      [PositiveInteger] int maxResults = 50)
+   {
+      var solution = _workspace.EnsureSolutionLoaded();
+      // Your logic using the solution
+      return ToolResult.Create(new YourToolResponse { /* results */ });
+   }
 }
 ```
 

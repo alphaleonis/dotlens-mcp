@@ -42,7 +42,7 @@ Pre-releases skip changelog validation. Release notes are auto-generated as "Pre
 4. Extracts release notes from the changelog
 5. Creates and pushes a git tag
 6. Builds, tests, and packs the NuGet package
-7. Creates a GitHub Release with the `.nupkg` attached
+7. Creates a GitHub Release with the `.nupkg` and `.snupkg` attached
 8. Pushes to NuGet.org
 9. On failure: cleans up the tag automatically
 

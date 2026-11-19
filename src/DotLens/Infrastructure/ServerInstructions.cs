@@ -28,7 +28,7 @@ public static class ServerInstructions
    /// Detailed instructions (~400 tokens) with comprehensive guidance.
    /// </summary>
    public const string Detailed = """
-      DotLens provides 60+ Roslyn-based tools for semantic C# code analysis, navigation, and refactoring.
+      DotLens provides Roslyn-based tools for semantic C# code analysis, navigation, and refactoring.
 
       ## When to Prefer DotLens
 
