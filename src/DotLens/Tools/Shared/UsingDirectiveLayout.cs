@@ -26,6 +26,10 @@ namespace DotLens.Tools.Shared;
 /// block.
 /// </para>
 /// <para>
+/// Roslyn's Organize Imports leaves the extern aliases and usings of a container in their order when a directive splits
+/// them, as IsSplit defines it, so these methods keep that order too.
+/// </para>
+/// <para>
 /// The scope chain is the compilation unit, then each namespace declaration that is the only member of the one before.
 /// The usings of every list in the chain reach all the code of the file.
 /// </para>
@@ -96,9 +100,12 @@ internal static class UsingDirectiveLayout
       GetContainers(unit).Any(c => GetExterns(c).Count > 0);
 
    /// <summary>
-   /// Removes the usings for which <paramref name="keep"/> returns false and sorts the rest within each run, in every
-   /// using list of <paramref name="unit"/>. Sorts every extern alias list within each run too.
+   /// Removes the usings for which <paramref name="keep"/> returns false and sorts the rest, in every using list of
+   /// <paramref name="unit"/>. Sorts every extern alias list too.
    /// </summary>
+   /// <remarks>
+   /// The extern aliases and usings of a container that a directive splits keep their order.
+   /// </remarks>
    /// <param name="keep">Called with the usings of <paramref name="unit"/> itself.</param>
    public static CompilationUnitSyntax Organize(
       CompilationUnitSyntax unit,
@@ -124,17 +131,19 @@ internal static class UsingDirectiveLayout
          var container = marked.GetAnnotatedNodes(marker).Single();
          bool IsKept(UsingDirectiveSyntax u) => !u.HasAnnotation(removedMarker);
          var externRuns = SplitRuns(GetExterns(container), _ => true);
-         var keepBlankLines = KeepsBlankLines(externRuns, SplitRuns(GetUsings(container), IsKept), usingList.Order);
+         var usingRuns = SplitRuns(GetUsings(container), IsKept);
+         var split = IsSplit(externRuns, usingRuns);
+         var keepBlankLines = KeepsBlankLines(split, externRuns, usingRuns, usingList.Order);
          if (GetExterns(container).Count > 0)
          {
-            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, options.NewLine);
+            marked = Place(marked, container, ExternList, externRuns, keepBlankLines, sort: !split, options.NewLine);
             container = marked.GetAnnotatedNodes(marker).Single();
          }
 
          if (GetUsings(container).Count > 0)
          {
             var runs = SplitRuns(GetUsings(container), IsKept);
-            marked = Place(marked, container, usingList, runs, keepBlankLines, options.NewLine);
+            marked = Place(marked, container, usingList, runs, keepBlankLines, sort: !split, options.NewLine);
          }
       }
 
@@ -143,12 +152,18 @@ internal static class UsingDirectiveLayout
 
    /// <summary>
    /// Adds <paramref name="newUsing"/> to the first list in the scope chain that has usings, and sorts the usings of
-   /// that list within each run.
+   /// that list within each run when no directive splits it.
    /// </summary>
    /// <remarks>
+   /// <para>
    /// The new using goes in the first run whose #if blocks all enclose all the code that the list reaches. When no run
    /// qualifies, the new using goes in a run of its own below the file header. A file without usings gets the new using
    /// at file level, below the file header.
+   /// </para>
+   /// <para>
+   /// A list that a directive splits keeps the order of its usings. The new using then goes to its sorted place in a
+   /// run that is in order, and to the end of any other run, as Roslyn adds a using to a list it does not sort.
+   /// </para>
    /// </remarks>
    /// <param name="newUsing">The using to add, without leading trivia. It takes the indentation of the first using.</param>
    /// <exception cref="ToolException">A #define or #undef inside an #if block follows the place for the new using.</exception>
@@ -166,10 +181,15 @@ internal static class UsingDirectiveLayout
       var codeRegions = regions.EnclosingCode(container, usings[^1].GetLastToken().GetNextToken(includeZeroWidth: true));
       var indented = newUsing.WithLeadingTrivia(GetIndentation(usings[0].GetLeadingTrivia()));
       var runs = SplitRuns(usings, _ => true);
-      var keepBlankLines = KeepsBlankLines(SplitRuns(GetExterns(container), _ => true), runs, usingList.Order);
+      var externRuns = SplitRuns(GetExterns(container), _ => true);
+      var split = IsSplit(externRuns, runs);
+      var keepBlankLines = KeepsBlankLines(split, externRuns, runs, usingList.Order);
       if (runs.Find(r => regions.At(r.Start).IsSubsetOf(codeRegions)) is { } target)
       {
-         target.Entries.Add((indented, -1));
+         var index = split && IsInOrder([target], usingList.Order)
+            ? target.Entries.FindIndex(e => usingList.Order.Compare(indented, e.Entry) < 0)
+            : -1;
+         target.Entries.Insert(index < 0 ? target.Entries.Count : index, (indented, -1));
       }
       else
       {
@@ -181,7 +201,7 @@ internal static class UsingDirectiveLayout
          runs.Insert(0, new Run<UsingDirectiveSyntax>(header, [(indented, -1)], runs[0].Start));
       }
 
-      return Place(unit, container, usingList, runs, keepBlankLines, options.NewLine);
+      return Place(unit, container, usingList, runs, keepBlankLines, sort: !split, options.NewLine);
    }
 
    /// <summary>
@@ -261,16 +281,18 @@ internal static class UsingDirectiveLayout
    }
 
    /// <summary>
-   /// Replaces the entries of <paramref name="list"/> in <paramref name="container"/> with the runs, each sorted, and
-   /// keeps the lead of a run whose entries were all removed.
+   /// Replaces the entries of <paramref name="list"/> in <paramref name="container"/> with the runs, and keeps the lead
+   /// of a run whose entries were all removed.
    /// </summary>
    /// <param name="keepBlankLines">Whether the entries keep the blank lines above them.</param>
+   /// <param name="sort">Whether to sort the entries of each run, or to keep them in the order the run holds them.</param>
    private static CompilationUnitSyntax Place<T>(
       CompilationUnitSyntax root,
       SyntaxNode container,
       EntryList<T> list,
       List<Run<T>> runs,
       bool keepBlankLines,
+      bool sort,
       string newLine)
       where T : SyntaxNode
    {
@@ -302,7 +324,7 @@ internal static class UsingDirectiveLayout
 
          pending = pending.AddRange(atListStart || EndsWithBlankLine(pending) ? TrimLeadingBlankLines(lead) : lead);
 
-         var sorted = runEntries.OrderBy(e => e.Entry, list.Order)
+         var sorted = (sort ? runEntries.OrderBy(e => e.Entry, list.Order) : runEntries.AsEnumerable())
             .Select(e => keepBlankLines ? e : e with { Entry = WithoutLeadingLineBreaks(e.Entry) })
             .ToList();
          if (sorted.Count == 0)
@@ -432,20 +454,44 @@ internal static class UsingDirectiveLayout
 
    /// <summary>
    /// Returns whether the entries of a container keep the line breaks above them. Roslyn removes them only from a list
-   /// that it sorts, and it does not sort a list that a directive splits.
+   /// that it sorts, so from neither a split list nor a list in order.
    /// </summary>
-   /// <remarks>
-   /// Roslyn takes the extern aliases and usings of a container as one list, so a directive above the first using
-   /// splits it when extern aliases come before.
-   /// </remarks>
    private static bool KeepsBlankLines(
+      bool split,
       List<Run<ExternAliasDirectiveSyntax>> externRuns,
       List<Run<UsingDirectiveSyntax>> usingRuns,
       IComparer<UsingDirectiveSyntax> usingOrder) =>
-      externRuns.Count > 1
-      || usingRuns.Count > 1
-      || (externRuns.Count > 0 && usingRuns.Count > 0 && usingRuns[0].Lead.Any(t => t.IsDirective))
-      || (IsInOrder(externRuns, ExternList.Order) && IsInOrder(usingRuns, usingOrder));
+      split || (IsInOrder(externRuns, ExternList.Order) && IsInOrder(usingRuns, usingOrder));
+
+   /// <summary>
+   /// Returns whether a directive splits the extern aliases and usings of a container, which Roslyn takes as one list.
+   /// A directive splits the list when it stands above an entry that remains, other than the first, or inside an entry.
+   /// </summary>
+   /// <remarks>
+   /// The lead of a run whose entries were all removed stays above the next entry that remains.
+   /// </remarks>
+   private static bool IsSplit(
+      List<Run<ExternAliasDirectiveSyntax>> externRuns,
+      List<Run<UsingDirectiveSyntax>> usingRuns)
+   {
+      var runs = externRuns.Select(r => (r.Lead, Entries: r.Entries.Select(e => (SyntaxNode)e.Entry).ToList()))
+         .Concat(usingRuns.Select(r => (r.Lead, Entries: r.Entries.Select(e => (SyntaxNode)e.Entry).ToList())));
+      var entryAbove = false;
+      var directiveAbove = false;
+      foreach (var (lead, entries) in runs)
+      {
+         directiveAbove |= entryAbove && lead.Any(t => t.IsDirective);
+         if (entries.Count == 0)
+            continue;
+
+         // The entries of a run hold no directive in their leading trivia, so a directive they hold is inside one.
+         if (directiveAbove || entries.Any(e => e.ContainsDirectives))
+            return true;
+         entryAbove = true;
+      }
+
+      return false;
+   }
 
    private static bool IsInOrder<T>(List<Run<T>> runs, IComparer<T> order)
       where T : SyntaxNode =>

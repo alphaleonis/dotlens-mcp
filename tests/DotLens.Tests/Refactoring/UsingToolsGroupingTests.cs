@@ -380,10 +380,10 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
    }
 
    /// <summary>
-   /// Roslyn leaves a list with a directive among its directives unsorted, so only the order the tool writes is compared.
+   /// A directive among the extern aliases splits the list, so Roslyn keeps its order.
    /// </summary>
    [Fact]
-   public async Task UsingTools_Grouping_OrganizeUsings_ExternAliasesAcrossDirective_SortsWithinEachRun()
+   public async Task UsingTools_Grouping_OrganizeUsings_ExternAliasesAcrossDirective_WritesWhatRoslynWrites()
    {
       await AssertOrganizeUsingsAsync("""
          // Header comment
@@ -409,14 +409,14 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
          """, """
          // Header comment
 
-         extern alias alpha;
          extern alias Zulu;
+         extern alias alpha;
          #if DEBUG
-         extern alias Kilo;
          extern alias Mike;
+         extern alias Kilo;
          #endif
-         extern alias Alpha;
          extern alias Bravo;
+         extern alias Alpha;
 
          using System.Text;
 
@@ -427,7 +427,7 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
             public Encoding? Text;
          }
 
-         """, roslynSortsInput: false);
+         """);
    }
 
    private static string GenericTypesSource(string usings) => $$"""
@@ -483,8 +483,7 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
 
       """;
 
-   /// <param name="roslynSortsInput">Whether Roslyn's Organize Imports writes the expected text from the source.</param>
-   private async Task AssertOrganizeUsingsAsync(string source, string expected, bool roslynSortsInput = true)
+   private async Task AssertOrganizeUsingsAsync(string source, string expected)
    {
       var path = await WriteSourceAsync(TargetPath, source);
       var document = await WorkspaceManager.GetDocumentAsync(path, CT);
@@ -494,14 +493,11 @@ public class UsingToolsGroupingTests : IsolatedProjectTestBase
          new FileScope { Path = path }, preview: false, cancellationToken: CT);
 
       Assert.True(result.Data.Applied);
-      Assert.Equal(1, result.Data.FilesChanged);
+      Assert.Equal(expected == source ? 0 : 1, result.Data.FilesChanged);
       Assert.Equal(0, result.Data.TotalUsingsRemoved);
       var written = await File.ReadAllTextAsync(path, CT);
       Assert.Equal(expected, written);
-      if (roslynSortsInput)
-         Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
-      else
-         Assert.Equal(source, (await roslynOrganized.GetTextAsync(CT)).ToString());
+      Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
 
       await AssertRoslynKeepsAsync(path, written);
    }

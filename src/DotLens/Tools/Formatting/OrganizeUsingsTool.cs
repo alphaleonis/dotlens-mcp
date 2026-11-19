@@ -22,7 +22,10 @@ public class OrganizeUsingsTool
    }
 
    [McpServerTool(Name = "organize_usings", Destructive = true, Idempotent = true, OpenWorld = false)]
-   [Description("Sort using and extern alias directives and remove unused usings in a file, project, or solution.")]
+   [Description("""
+      Sort using and extern alias directives and remove unused usings in a file, project, or solution.
+      A list that a preprocessor directive splits keeps its order, as the IDE's Organize Usings leaves it.
+      """)]
    public async Task<ToolResult<OrganizeUsingsResponse>> OrganizeUsingsAsync(
        [Description("Search scope. Defaults to entire solution.")]
        SearchScope? scope = null,

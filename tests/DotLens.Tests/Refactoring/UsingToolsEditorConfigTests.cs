@@ -661,40 +661,39 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
       {
          false,
          "extern alias Ex;\n\n#region Usings\nusing Zeta;\nusing System.Text;\n\nusing Alpha;\n#endregion",
-         "extern alias Ex;\n\n#region Usings\nusing System.Text;\n\nusing Alpha;\nusing Zeta;\n#endregion"
+         "extern alias Ex;\n\n#region Usings\nusing Zeta;\nusing System.Text;\n\nusing Alpha;\n#endregion"
       },
       {
          true,
          "extern alias Ex;\n\n#region Usings\nusing Zeta;\nusing System.Text;\n\nusing Alpha;\n#endregion",
-         "extern alias Ex;\n\n#region Usings\nusing System.Text;\n\nusing Alpha;\n\nusing Zeta;\n#endregion"
+         "extern alias Ex;\n\n#region Usings\nusing Zeta;\n\nusing System.Text;\n\nusing Alpha;\n#endregion"
       },
       {
          false,
          "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Zeta;\nusing Alpha;",
-         "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Alpha;\nusing Zeta;"
+         "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Zeta;\nusing Alpha;"
       },
       {
          true,
          "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Zeta;\nusing Alpha;",
-         "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Alpha;\n\nusing Zeta;"
+         "extern alias Ex;\n\n#pragma warning disable CS0168\nusing Zeta;\n\nusing Alpha;"
       },
    };
 
    /// <summary>
-   /// A directive above the first using below extern aliases splits the list, so Roslyn leaves it as it is and keeps
-   /// its blank lines. The tool sorts within the run of usings below the directive.
+   /// A directive above the first using below extern aliases splits the list, so Roslyn keeps its order and its blank
+   /// lines.
    /// </summary>
    [Theory]
    [MemberData(nameof(DirectiveBelowExternAliasCases))]
-   public async Task UsingTools_EditorConfig_OrganizeUsings_DirectiveBelowExternAlias_KeepsBlankLines(
+   public async Task UsingTools_EditorConfig_OrganizeUsings_DirectiveBelowExternAlias_WritesWhatRoslynWrites(
       bool separateGroups,
       string usings,
       string expectedUsings)
    {
       await UseEditorConfigAsync(sortSystemFirst: true, separateGroups);
 
-      await AssertOrganizeUsingsAsync(
-         SystemTextSource(usings), SystemTextSource(expectedUsings), roslynSortsInput: false);
+      await AssertOrganizeUsingsAsync(SystemTextSource(usings), SystemTextSource(expectedUsings));
    }
 
    public static TheoryData<bool, string, string> TriviaBelowExternAliasCases => new()
@@ -736,41 +735,40 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
       {
          false,
          "using Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;",
-         "using Alpha;\nusing Zeta;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
+         "using Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
       },
       {
          true,
          "using Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;",
-         "using Alpha;\n\nusing Zeta;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
+         "using Zeta;\n\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
       },
       {
          false,
          "extern alias Ex;\nusing Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;",
-         "extern alias Ex;\nusing Alpha;\nusing Zeta;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
+         "extern alias Ex;\nusing Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
       },
       {
          true,
          "extern alias Ex;\nusing Zeta;\nusing Alpha;\n\n#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;",
-         "extern alias Ex;\n\nusing Alpha;\n\nusing Zeta;\n\n"
+         "extern alias Ex;\n\nusing Zeta;\n\nusing Alpha;\n\n"
             + "#pragma warning disable CS0168\nusing Beta;\n\nusing Gamma;"
       },
    };
 
    /// <summary>
-   /// A directive above a later using splits the list, with or without extern aliases, so Roslyn leaves it as it is and
-   /// keeps its blank lines. The tool sorts within each run.
+   /// A directive above a later using splits the list, with or without extern aliases, so Roslyn keeps its order and
+   /// its blank lines.
    /// </summary>
    [Theory]
    [MemberData(nameof(DirectiveAboveLaterUsingCases))]
-   public async Task UsingTools_EditorConfig_OrganizeUsings_DirectiveAboveLaterUsing_KeepsBlankLines(
+   public async Task UsingTools_EditorConfig_OrganizeUsings_DirectiveAboveLaterUsing_WritesWhatRoslynWrites(
       bool separateGroups,
       string usings,
       string expectedUsings)
    {
       await UseEditorConfigAsync(sortSystemFirst: true, separateGroups);
 
-      await AssertOrganizeUsingsAsync(
-         FourNamespacesSource(usings), FourNamespacesSource(expectedUsings), roslynSortsInput: false);
+      await AssertOrganizeUsingsAsync(FourNamespacesSource(usings), FourNamespacesSource(expectedUsings));
    }
 
    /// <summary>
@@ -828,7 +826,7 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
    }
 
    /// <summary>
-   /// Each run is in order, so the tool writes what Roslyn writes, which does not sort a list that a directive splits.
+   /// Roslyn adds the blank lines between groups to a list that a directive splits, though it does not sort it.
    /// </summary>
    [Fact]
    public async Task UsingTools_EditorConfig_OrganizeUsings_DirectivesBetweenGroups_WritesWhatRoslynWrites()
@@ -1263,11 +1261,7 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
          project.AddAnalyzerConfigDocument(".editorconfig", SourceText.From(text), filePath: path).Project.Solution);
    }
 
-   /// <param name="roslynSortsInput">
-   /// Whether Roslyn's Organize Imports writes the expected text. When it does not, it must keep the order of the
-   /// usings of the source, and leave the expected text as it is.
-   /// </param>
-   private async Task AssertOrganizeUsingsAsync(string source, string expected, bool roslynSortsInput = true)
+   private async Task AssertOrganizeUsingsAsync(string source, string expected)
    {
       var path = await WriteSourceAsync(TargetPath, source);
       var document = await WorkspaceManager.GetDocumentAsync(path, CT);
@@ -1282,15 +1276,7 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
       var written = await File.ReadAllTextAsync(path, CT);
       Assert.Equal(expected, written);
       Assert.Empty(ParseDiagnostics(written));
-      if (roslynSortsInput)
-      {
-         Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
-         return;
-      }
-
-      Assert.Equal(UsingLines(source), UsingLines((await roslynOrganized.GetTextAsync(CT)).ToString()));
-      var reorganized = await Formatter.OrganizeImportsAsync(document.WithText(SourceText.From(written)), CT);
-      Assert.Equal(written, (await reorganized.GetTextAsync(CT)).ToString());
+      Assert.Equal((await roslynOrganized.GetTextAsync(CT)).ToString(), written);
    }
 
    private async Task AssertAddUsingAsync(string @namespace, string source, string expected)
@@ -1308,9 +1294,6 @@ public class UsingToolsEditorConfigTests : IsolatedProjectTestBase
       var roslynOrganized = await Formatter.OrganizeImportsAsync(document.WithText(SourceText.From(written)), CT);
       Assert.Equal(written, (await roslynOrganized.GetTextAsync(CT)).ToString());
    }
-
-   private static List<string> UsingLines(string text) =>
-      [.. text.Split('\n').Where(l => l.StartsWith("using ", StringComparison.Ordinal))];
 
    private static List<string> ParseDiagnostics(string text) =>
       [.. CSharpSyntaxTree.ParseText(text, cancellationToken: TestContext.Current.CancellationToken)
