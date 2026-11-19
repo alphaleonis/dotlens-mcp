@@ -99,3 +99,8 @@
 ## dotlens-2hzp — using options (2026-11-19)
 - With Roslyn as the oracle, the first review still found three divergences and the re-review two more, all on input shapes the implementer had not enumerated (global vs plain alone, trivia under extern aliases, directives on the first using). Ask the implementer up front for a table of input shapes run through Roslyn, not only the cases the nib lists.
 - UsingDirectiveLayout has drawn correctness findings in 10 reviews since 2026-11-17; treat any change there as re-review-worthy by default.
+
+## dotlens-0zzn — indirect recursion (2026-11-19)
+- Fixtures added to a shared fixture project can break tests elsewhere (a first-search-result lookup, a maxResults-truncated scan); have implementers who add fixture files run the classes that scan the whole project before handing back.
+- A "compile-time binding" rule needs every compiler-inserted call enumerated up front (accessors, foreach/await/deconstruction patterns, record members, implicit base calls); each review round found another family.
+- When Roslyn exposes no binding, writing the call into a copy of the compilation and binding it there beat a hand-written overload rule, but the copy has to keep the original declaration accessibility.
