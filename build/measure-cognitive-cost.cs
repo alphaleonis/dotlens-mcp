@@ -71,13 +71,13 @@ var targets = new List<Target>();
 foreach (var projectName in projectNames)
    targets.Add(await SelectTargetAsync(workspace.EnsureSolutionLoaded(), projectName));
 
-// Run every call once before the measurements, so no cold timing includes the JIT compiling DotLens and Roslyn code.
+// Run every cell once untimed, so tiered compilation has optimized the load, call and sync code before any cell is timed.
 foreach (var target in targets)
 {
    foreach (var fileMode in new[] { false, true })
    {
       foreach (var metrics in new[] { defaultMetrics, baselineMetrics })
-         await CallAsync(target, fileMode, metrics);
+         await MeasureAsync(target, fileMode, metrics);
    }
 }
 
