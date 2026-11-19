@@ -1,0 +1,8 @@
+<Project>
+  <!-- A script under build/ that references a project measures or runs the shipped code, so it builds that project in Release. -->
+  <ItemDefinitionGroup>
+    <ProjectReference>
+      <SetConfiguration>Configuration=Release</SetConfiguration>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+</Project>
