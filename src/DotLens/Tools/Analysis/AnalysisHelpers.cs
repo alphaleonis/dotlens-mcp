@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -369,55 +370,23 @@ internal static class AnalysisHelpers
    /// </summary>
    private static int CountRecursiveMethods(SyntaxNode node, SemanticModel semanticModel, CancellationToken cancellationToken)
    {
-      var compilation = semanticModel.Compilation;
-      var cycleMembers = RecursionCyclesByCompilation
-         .GetValue(compilation, static _ => new RecursionCycles())
-         .GetMembers(compilation, cancellationToken);
-
-      return node.DescendantNodesAndSelf()
+      var declared = node.DescendantNodesAndSelf()
          .Select(declaration => GetDeclaredCallGraphMethod(declaration, semanticModel, cancellationToken))
-         .Count(method =>
-            method is not null
-            // The implementation part of a partial member holds the body, so only that part counts.
-            && method.PartialImplementationPart is null
-            && cycleMembers.Contains(GetCallGraphNode(method)));
+         .OfType<IMethodSymbol>()
+         // The implementation part of a partial member holds the body, so only that part counts.
+         .Where(method => method.PartialImplementationPart is null)
+         .Select(GetCallGraphNode)
+         .ToList();
+      if (declared.Count == 0)
+         return 0;
+
+      var cycleMembers = FindRecursionCycleMembers(semanticModel.Compilation, declared, cancellationToken);
+      return declared.Count(cycleMembers.Contains);
    }
 
    /// <summary>
-   /// The methods of one compilation that are in a recursion cycle, found on first use.
-   /// </summary>
-   private sealed class RecursionCycles
-   {
-      private static readonly TimeSpan CancellationCheckInterval = TimeSpan.FromMilliseconds(50);
-
-      private readonly Lock _gate = new();
-      private FrozenSet<IMethodSymbol>? _members;
-
-      public FrozenSet<IMethodSymbol> GetMembers(Compilation compilation, CancellationToken cancellationToken)
-      {
-         if (Volatile.Read(ref _members) is { } members)
-            return members;
-
-         // One caller searches while the others wait, and a canceled search leaves the search to the next caller.
-         while (!_gate.TryEnter(CancellationCheckInterval))
-            cancellationToken.ThrowIfCancellationRequested();
-
-         try
-         {
-            members = _members ?? FindRecursionCycleMembers(compilation, cancellationToken);
-            Volatile.Write(ref _members, members);
-            return members;
-         }
-         finally
-         {
-            _gate.Exit();
-         }
-      }
-   }
-
-   /// <summary>
-   /// Returns the methods in a cycle of the compilation's call graph: a strongly connected component of two or more
-   /// methods, or a method that calls itself.
+   /// Returns those of the methods that are in a cycle of the compilation's call graph: a strongly connected component
+   /// of two or more methods, or a method that calls itself.
    /// </summary>
    /// <remarks>
    /// <para>
@@ -439,83 +408,303 @@ internal static class AnalysisHelpers
    /// A call in a lambda belongs to the declaration around the lambda, and a call in a local function belongs to the
    /// local function.
    /// </para>
+   /// <para>
+   /// A method's strongly connected component lies within the methods it reaches, so the search binds only the methods
+   /// reachable from the ones asked about. <see cref="RecursionCycles"/> keeps what it finds per compilation.
+   /// </para>
    /// </remarks>
-   private static FrozenSet<IMethodSymbol> FindRecursionCycleMembers(Compilation compilation, CancellationToken cancellationToken)
+   /// <param name="methods">The methods to check, each as <see cref="GetCallGraphNode"/> returns it.</param>
+   private static HashSet<IMethodSymbol> FindRecursionCycleMembers(
+      Compilation compilation,
+      IReadOnlyCollection<IMethodSymbol> methods,
+      CancellationToken cancellationToken)
    {
-      var indices = new Dictionary<IMethodSymbol, int>(SymbolEqualityComparer.Default);
-      var methods = new List<IMethodSymbol>();
-      var calls = new List<(int Caller, int Callee)>();
-      var types = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-      var initializerCalls = new Dictionary<INamedTypeSymbol, List<IMethodSymbol>>(SymbolEqualityComparer.Default);
+      return RecursionCyclesByCompilation
+         .GetValue(compilation, static key => new RecursionCycles(key))
+         .FindMembers(methods, cancellationToken);
+   }
 
-      int GetIndex(IMethodSymbol method)
+   /// <summary>
+   /// The recursion cycles of one compilation, searched for from the methods asked about and kept for later searches.
+   /// </summary>
+   /// <remarks>
+   /// A search explores the call graph from the methods that no earlier search finished, then runs Tarjan's algorithm
+   /// on what it explored. Every method it explored is then finished, with a final answer, because its strongly
+   /// connected component lies within what the search explored. A later search stops at a finished method, because
+   /// everything that method reaches is finished too, so it cannot join a new component.
+   /// </remarks>
+   private sealed class RecursionCycles(Compilation compilation)
+   {
+      private static readonly TimeSpan CancellationCheckInterval = TimeSpan.FromMilliseconds(50);
+
+      private readonly Lock _gate = new();
+
+      // Whether each finished method is in a cycle. A search writes it under _gate only once it has run to its end, so
+      // a canceled search leaves no answer. Readers take no lock.
+      private readonly ConcurrentDictionary<IMethodSymbol, bool> _finished = new(SymbolEqualityComparer.Default);
+
+      // The fields below are used under _gate only. Each entry is complete once added, so a canceled search leaves
+      // none half built.
+      private readonly HashSet<SyntaxTree> _indexedTrees = [];
+      private readonly Dictionary<IMethodSymbol, List<SyntaxNode>> _declarations = new(SymbolEqualityComparer.Default);
+      private readonly Dictionary<INamedTypeSymbol, List<IMethodSymbol>> _initializerCalls = new(SymbolEqualityComparer.Default);
+      private readonly Dictionary<INamedTypeSymbol, Dictionary<IMethodSymbol, List<IMethodSymbol?>>> _recordMemberCalls =
+         new(SymbolEqualityComparer.Default);
+      private readonly Dictionary<INamedTypeSymbol, Dictionary<IMethodSymbol, IMethodSymbol>> _baseConstructorCalls =
+         new(SymbolEqualityComparer.Default);
+      private readonly Dictionary<SyntaxTree, SemanticModel> _semanticModels = [];
+
+      public HashSet<IMethodSymbol> FindMembers(IReadOnlyCollection<IMethodSymbol> methods, CancellationToken cancellationToken)
       {
-         var node = GetCallGraphNode(method);
-         if (!indices.TryGetValue(node, out var index))
+         if (!methods.All(_finished.ContainsKey))
          {
-            index = methods.Count;
-            indices.Add(node, index);
-            methods.Add(node);
-         }
+            // One caller searches while the others wait.
+            while (!_gate.TryEnter(CancellationCheckInterval))
+               cancellationToken.ThrowIfCancellationRequested();
 
-         return index;
-      }
-
-      void AddCalls(IMethodSymbol caller, IEnumerable<IMethodSymbol?> callees)
-      {
-         int? callerIndex = null;
-         foreach (var callee in callees)
-         {
-            if (callee is not null)
-               calls.Add((callerIndex ??= GetIndex(caller), GetIndex(callee)));
-         }
-      }
-
-      foreach (var tree in compilation.SyntaxTrees)
-      {
-         var semanticModel = compilation.GetSemanticModel(tree);
-         foreach (var node in tree.GetRoot(cancellationToken).DescendantNodes())
-         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (node is TypeDeclarationSyntax && semanticModel.GetDeclaredSymbol(node, cancellationToken) is INamedTypeSymbol type)
-               types.Add(type);
-
-            if (GetInstanceInitializer(node, semanticModel, cancellationToken) is var (initializedType, initializer))
+            try
             {
-               if (!initializerCalls.TryGetValue(initializedType, out var typeInitializerCalls))
-                  initializerCalls.Add(initializedType, typeInitializerCalls = []);
-               typeInitializerCalls.AddRange(GetCalledMethods(initializer, semanticModel).OfType<IMethodSymbol>());
+               Search(methods.Where(method => !_finished.ContainsKey(method)), cancellationToken);
             }
-
-            if (GetDeclaredCallGraphMethod(node, semanticModel, cancellationToken) is { } method
-               && semanticModel.GetOperation(node, cancellationToken) is { } body)
+            finally
             {
-               AddCalls(method, GetCalledMethods(body, semanticModel));
+               // The models hold what they bound, which no later search needs.
+               _semanticModels.Clear();
+               _gate.Exit();
             }
          }
+
+         return methods.Where(method => _finished[method]).ToHashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
       }
 
-      foreach (var (constructor, baseConstructor) in GetImplicitBaseConstructorCalls(compilation, types, cancellationToken))
-         AddCalls(constructor, [baseConstructor]);
-
-      foreach (var type in types)
+      private void Search(IEnumerable<IMethodSymbol> methods, CancellationToken cancellationToken)
       {
          cancellationToken.ThrowIfCancellationRequested();
-         initializerCalls.TryGetValue(type, out var typeInitializerCalls);
-         foreach (var constructor in type.InstanceConstructors)
+         var calls = new Dictionary<IMethodSymbol, List<IMethodSymbol>>(SymbolEqualityComparer.Default);
+         var pending = new Stack<IMethodSymbol>(methods);
+         var awaitingBaseCall = new List<IMethodSymbol>();
+         while (true)
          {
-            if (typeInitializerCalls is not null && RunsInstanceInitializers(constructor, cancellationToken))
-               AddCalls(constructor, typeInitializerCalls);
+            while (pending.TryPop(out var method))
+            {
+               if (_finished.ContainsKey(method) || calls.ContainsKey(method))
+                  continue;
+
+               cancellationToken.ThrowIfCancellationRequested();
+               var callees = new List<IMethodSymbol>();
+               calls.Add(method, callees);
+               foreach (var callee in GetCalledMethods(method, cancellationToken))
+                  AddCall(callees, callee);
+
+               if (NeedsBaseConstructorCall(method, cancellationToken))
+               {
+                  if (_baseConstructorCalls.TryGetValue(method.ContainingType, out var baseCalls))
+                     AddCall(callees, baseCalls.GetValueOrDefault(method));
+                  else
+                     awaitingBaseCall.Add(method);
+               }
+            }
+
+            if (awaitingBaseCall.Count == 0)
+               break;
+
+            // Each binding of implicit base constructor calls builds a copy of the compilation, so one binding serves
+            // every constructor that this round of the search reached.
+            ResolveBaseConstructorCalls(
+               awaitingBaseCall.Select(method => method.ContainingType).Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default),
+               cancellationToken);
+            foreach (var constructor in awaitingBaseCall)
+               AddCall(calls[constructor], _baseConstructorCalls[constructor.ContainingType].GetValueOrDefault(constructor));
+            awaitingBaseCall.Clear();
          }
 
-         if (type.IsRecord)
+         var explored = calls.Keys.ToList();
+         var indices = new Dictionary<IMethodSymbol, int>(SymbolEqualityComparer.Default);
+         foreach (var method in explored)
+            indices.Add(method, indices.Count);
+         var edges = new List<(int Caller, int Callee)>();
+         foreach (var (caller, callees) in calls)
          {
-            foreach (var (member, callees) in GetGeneratedRecordMemberCalls(type))
-               AddCalls(member, callees);
+            foreach (var callee in callees)
+            {
+               // A callee missing from the indices was finished by an earlier search.
+               if (indices.TryGetValue(callee, out var calleeIndex))
+                  edges.Add((indices[caller], calleeIndex));
+            }
+         }
+
+         var members = FindCycleMembers(explored, edges, cancellationToken);
+         foreach (var method in explored)
+            _finished[method] = members.Contains(method);
+
+         void AddCall(List<IMethodSymbol> callees, IMethodSymbol? callee)
+         {
+            // A method outside the compilation calls nothing in it, because project references are acyclic.
+            if (callee is not null
+               && GetCallGraphNode(callee) is var node
+               && SymbolEqualityComparer.Default.Equals(node.ContainingAssembly, compilation.Assembly))
+            {
+               callees.Add(node);
+               pending.Push(node);
+            }
          }
       }
 
-      return FindCycleMembers(methods, calls, cancellationToken);
+      /// <summary>
+      /// Returns what the method calls, apart from an implicit base constructor call.
+      /// </summary>
+      private IEnumerable<IMethodSymbol?> GetCalledMethods(IMethodSymbol method, CancellationToken cancellationToken)
+      {
+         IndexDeclarations(method, cancellationToken);
+         if (_declarations.TryGetValue(method, out var declarations))
+         {
+            foreach (var declaration in declarations)
+            {
+               var semanticModel = GetSemanticModel(declaration.SyntaxTree);
+               if (semanticModel.GetOperation(declaration, cancellationToken) is { } body)
+               {
+                  foreach (var callee in AnalysisHelpers.GetCalledMethods(body, semanticModel))
+                     yield return callee;
+               }
+            }
+         }
+
+         if (method.ContainingType is not { } type || !IsDeclaredByTypeDeclaration(type, cancellationToken))
+            yield break;
+
+         if (method.MethodKind == MethodKind.Constructor
+            && type.InstanceConstructors.Any(constructor =>
+               SymbolEqualityComparer.Default.Equals(GetCallGraphNode(constructor), method)
+               && RunsInstanceInitializers(constructor, cancellationToken)))
+         {
+            foreach (var callee in GetInitializerCalls(type, cancellationToken))
+               yield return callee;
+         }
+
+         if (type.IsRecord && GetRecordMemberCalls(type).TryGetValue(method, out var recordMemberCallees))
+         {
+            foreach (var callee in recordMemberCallees)
+               yield return callee;
+         }
+      }
+
+      /// <summary>
+      /// Maps each method declared in the trees of the method and of its type to its declarations, once per tree.
+      /// </summary>
+      /// <remarks>
+      /// Every declaration that maps to a method lies in a declaration of the method's type: a partial part, an
+      /// extension block of the static class, or a member that holds a local function.
+      /// </remarks>
+      private void IndexDeclarations(IMethodSymbol method, CancellationToken cancellationToken)
+      {
+         var trees = (method.ContainingType?.DeclaringSyntaxReferences ?? [])
+            .Concat(method.DeclaringSyntaxReferences)
+            .Select(reference => reference.SyntaxTree);
+         foreach (var tree in trees)
+         {
+            if (_indexedTrees.Contains(tree))
+               continue;
+
+            var semanticModel = GetSemanticModel(tree);
+            var found = new List<(IMethodSymbol Method, SyntaxNode Declaration)>();
+            foreach (var node in tree.GetRoot(cancellationToken).DescendantNodes())
+            {
+               cancellationToken.ThrowIfCancellationRequested();
+               if (GetDeclaredCallGraphMethod(node, semanticModel, cancellationToken) is { } declared)
+                  found.Add((GetCallGraphNode(declared), node));
+            }
+
+            foreach (var (declared, declaration) in found)
+            {
+               if (!_declarations.TryGetValue(declared, out var declarations))
+                  _declarations.Add(declared, declarations = []);
+               declarations.Add(declaration);
+            }
+
+            _indexedTrees.Add(tree);
+         }
+      }
+
+      private List<IMethodSymbol> GetInitializerCalls(INamedTypeSymbol type, CancellationToken cancellationToken)
+      {
+         if (_initializerCalls.TryGetValue(type, out var calls))
+            return calls;
+
+         calls = [];
+         foreach (var reference in type.DeclaringSyntaxReferences)
+         {
+            if (reference.GetSyntax(cancellationToken) is not TypeDeclarationSyntax declaration)
+               continue;
+
+            var semanticModel = GetSemanticModel(reference.SyntaxTree);
+            var initializers = declaration.Members.SelectMany<MemberDeclarationSyntax, SyntaxNode?>(member => member switch
+            {
+               BaseFieldDeclarationSyntax field => field.Declaration.Variables.Select(variable => variable.Initializer),
+               PropertyDeclarationSyntax property => [property.Initializer],
+               _ => []
+            });
+            foreach (var initializer in initializers.OfType<SyntaxNode>())
+            {
+               if (GetInstanceInitializer(initializer, semanticModel, cancellationToken) is var (initializedType, operation)
+                  && SymbolEqualityComparer.Default.Equals(initializedType, type))
+               {
+                  calls.AddRange(AnalysisHelpers.GetCalledMethods(operation, semanticModel).OfType<IMethodSymbol>());
+               }
+            }
+         }
+
+         _initializerCalls.Add(type, calls);
+         return calls;
+      }
+
+      private Dictionary<IMethodSymbol, List<IMethodSymbol?>> GetRecordMemberCalls(INamedTypeSymbol record)
+      {
+         if (_recordMemberCalls.TryGetValue(record, out var calls))
+            return calls;
+
+         calls = new Dictionary<IMethodSymbol, List<IMethodSymbol?>>(SymbolEqualityComparer.Default);
+         foreach (var (member, callees) in GetGeneratedRecordMemberCalls(record))
+         {
+            var node = GetCallGraphNode(member);
+            if (!calls.TryGetValue(node, out var memberCallees))
+               calls.Add(node, memberCallees = []);
+            memberCallees.AddRange(callees);
+         }
+
+         _recordMemberCalls.Add(record, calls);
+         return calls;
+      }
+
+      /// <summary>
+      /// Returns whether the method is a constructor whose implicit base constructor call can close a cycle.
+      /// </summary>
+      private bool NeedsBaseConstructorCall(IMethodSymbol method, CancellationToken cancellationToken)
+         => method is { MethodKind: MethodKind.Constructor, ContainingType: { TypeKind: TypeKind.Class, BaseType: { } baseType } type }
+            && SymbolEqualityComparer.Default.Equals(baseType.ContainingAssembly, compilation.Assembly)
+            && IsDeclaredByTypeDeclaration(type, cancellationToken);
+
+      private void ResolveBaseConstructorCalls(IEnumerable<INamedTypeSymbol> types, CancellationToken cancellationToken)
+      {
+         var resolved = new Dictionary<INamedTypeSymbol, Dictionary<IMethodSymbol, IMethodSymbol>>(SymbolEqualityComparer.Default);
+         foreach (var type in types)
+            resolved.Add(type, new Dictionary<IMethodSymbol, IMethodSymbol>(SymbolEqualityComparer.Default));
+         foreach (var (constructor, baseConstructor) in GetImplicitBaseConstructorCalls(compilation, resolved.Keys, cancellationToken))
+            resolved[constructor.ContainingType][GetCallGraphNode(constructor)] = baseConstructor;
+
+         foreach (var (type, calls) in resolved)
+            _baseConstructorCalls.Add(type, calls);
+      }
+
+      private SemanticModel GetSemanticModel(SyntaxTree tree)
+      {
+         if (!_semanticModels.TryGetValue(tree, out var semanticModel))
+            _semanticModels.Add(tree, semanticModel = compilation.GetSemanticModel(tree));
+         return semanticModel;
+      }
+
+      // The search covers the types that a type declaration declares, which leaves out delegates and enums.
+      private static bool IsDeclaredByTypeDeclaration(INamedTypeSymbol type, CancellationToken cancellationToken)
+         => type.DeclaringSyntaxReferences.Any(reference => reference.GetSyntax(cancellationToken) is TypeDeclarationSyntax);
    }
 
    /// <summary>

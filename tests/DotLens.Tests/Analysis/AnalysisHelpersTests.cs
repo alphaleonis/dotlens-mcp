@@ -1,4 +1,5 @@
 using DotLens.Tools.Analysis;
+using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -226,6 +227,192 @@ namespace TestNamespace
       Assert.NotNull(semanticModel);
       var ping = root.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.Text == "Ping");
       return AnalysisHelpers.CalculateCognitiveComplexity(ping, semanticModel, cancellationToken);
+   }
+
+   private const string CycleOrderGraphCode = """
+      public static class Graph
+      {
+         public static void Entry() { A(); Self(); Tail(); }
+         public static void A() => B();
+         public static void B() { C(); D(); }
+         public static void C() => A();
+         public static void D() => E();
+         public static void E() => F();
+         public static void F() { E(); Tail(); }
+         public static void Self() => Self();
+         public static void Tail() { }
+         public static int Outer() { return Local(3); int Local(int n) => Outer() + Local(n); }
+      }
+
+      public class Node
+      {
+         private readonly int _seed = Seed();
+         public Node() { }
+         public static int Seed() { _ = new Leaf(); return 0; }
+      }
+
+      public class Leaf : Node { }
+
+      public record Rec
+      {
+         public int P => Describe(this);
+         public static int Describe(Rec r) => r.ToString().Length;
+      }
+
+      public partial class Split
+      {
+         public void First() => Second();
+         public void Start() => First();
+      }
+      """;
+
+   private const string CycleOrderSplitCode = """
+      public partial class Split
+      {
+         public void Second() => Third();
+         public void Third() => First();
+      }
+      """;
+
+   // Each measured declaration has no other increment, so its cognitive complexity counts its cycle members.
+   private static readonly Dictionary<string, int> CycleOrderExpected = new()
+   {
+      ["Graph.Entry"] = 0,
+      ["Graph.A"] = 1,
+      ["Graph.B"] = 1,
+      ["Graph.C"] = 1,
+      ["Graph.D"] = 0,
+      ["Graph.E"] = 1,
+      ["Graph.F"] = 1,
+      ["Graph.Self"] = 1,
+      ["Graph.Tail"] = 0,
+      ["Graph.Outer"] = 2,
+      ["Graph.Local"] = 1,
+      ["Node.Node"] = 1,
+      ["Node.Seed"] = 1,
+      ["Rec.Describe"] = 1,
+      ["Split.First"] = 1,
+      ["Split.Start"] = 0,
+      ["Split.Second"] = 1,
+      ["Split.Third"] = 1,
+   };
+
+   public static TheoryData<string> CycleOrderMethodNames => new(CycleOrderExpected.Keys);
+
+   /// <summary>
+   /// The search keeps what it finished per compilation, so a method measured first explores alone and the methods
+   /// measured after it reuse its results.
+   /// </summary>
+   [Theory]
+   [MemberData(nameof(CycleOrderMethodNames))]
+   public void CalculateCognitiveComplexity_FindsTheSameCyclesWhicheverMethodIsMeasuredFirst(string first)
+   {
+      var methods = GetCycleOrderMethods(CreateCycleOrderCompilation());
+
+      var firstComplexity = MeasureCycleOrderMethod(methods, first, CancellationToken.None);
+
+      Assert.Equal(CycleOrderExpected[first], firstComplexity);
+      Assert.Equal(CycleOrderExpected, MeasureCycleOrderMethods(methods, methods.Select(m => m.Name)));
+   }
+
+   /// <summary>
+   /// File mode measures each method of a file in turn, so a later method in one order is an earlier one in the other.
+   /// </summary>
+   [Fact]
+   public void CalculateCognitiveComplexity_FindsTheSameCyclesInFileOrderAndInReverse()
+   {
+      var methods = GetCycleOrderMethods(CreateCycleOrderCompilation());
+      var reversedMethods = GetCycleOrderMethods(CreateCycleOrderCompilation());
+
+      Assert.Equal(CycleOrderExpected, MeasureCycleOrderMethods(methods, methods.Select(m => m.Name)));
+      Assert.Equal(CycleOrderExpected, MeasureCycleOrderMethods(methods, methods.Select(m => m.Name).Reverse()));
+      Assert.Equal(CycleOrderExpected, MeasureCycleOrderMethods(reversedMethods, reversedMethods.Select(m => m.Name).Reverse()));
+   }
+
+   /// <summary>
+   /// The token runs out after a growing delay, so the cancellation lands at varied points of the searches of one
+   /// file-mode pass. Wherever it lands, the next pass on the same compilation finds the same cycles.
+   /// </summary>
+   [Fact]
+   public void CalculateCognitiveComplexity_FindsTheSameCyclesAfterAMeasurementCanceledPartway()
+   {
+      var canceledPasses = 0;
+      for (var delayTicks = 0; delayTicks <= 200_000; delayTicks += 5_000)
+      {
+         var methods = GetCycleOrderMethods(CreateCycleOrderCompilation());
+         using var cancellation = new CancellationTokenSource(TimeSpan.FromTicks(delayTicks));
+         try
+         {
+            foreach (var (name, _, _) in methods)
+               Assert.Equal(CycleOrderExpected[name], MeasureCycleOrderMethod(methods, name, cancellation.Token));
+         }
+         catch (OperationCanceledException)
+         {
+            canceledPasses++;
+         }
+
+         Assert.Equal(CycleOrderExpected, MeasureCycleOrderMethods(methods, methods.Select(m => m.Name)));
+      }
+
+      Assert.NotEqual(0, canceledPasses);
+   }
+
+   private static CSharpCompilation CreateCycleOrderCompilation()
+   {
+      var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+      var compilation = CSharpCompilation.Create(
+         "CycleOrder",
+         [
+            CSharpSyntaxTree.ParseText(CycleOrderGraphCode, parseOptions, "Graph.cs"),
+            CSharpSyntaxTree.ParseText(CycleOrderSplitCode, parseOptions, "Split.cs"),
+         ],
+         TestHelpers.CoreReferences,
+         new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+      Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+      return compilation;
+   }
+
+   /// <summary>
+   /// Returns the declarations that file mode measures, in file order, each named by its type and identifier.
+   /// </summary>
+   private static List<(string Name, SyntaxNode Declaration, SemanticModel SemanticModel)> GetCycleOrderMethods(Compilation compilation)
+   {
+      var methods = new List<(string Name, SyntaxNode Declaration, SemanticModel SemanticModel)>();
+      foreach (var tree in compilation.SyntaxTrees)
+      {
+         var semanticModel = compilation.GetSemanticModel(tree);
+         foreach (var declaration in tree.GetRoot().DescendantNodes().Where(n => n.IsCallableMethodSyntax()))
+         {
+            var type = declaration.Ancestors().OfType<TypeDeclarationSyntax>().First().Identifier.Text;
+            var identifier = declaration switch
+            {
+               MethodDeclarationSyntax method => method.Identifier.Text,
+               ConstructorDeclarationSyntax constructor => constructor.Identifier.Text,
+               LocalFunctionStatementSyntax localFunction => localFunction.Identifier.Text,
+               _ => throw new InvalidOperationException($"Unexpected declaration: {declaration.Kind()}")
+            };
+            methods.Add(($"{type}.{identifier}", declaration, semanticModel));
+         }
+      }
+
+      Assert.Equivalent(CycleOrderExpected.Keys, methods.Select(m => m.Name), strict: true);
+      return methods;
+   }
+
+   private static int MeasureCycleOrderMethod(
+      List<(string Name, SyntaxNode Declaration, SemanticModel SemanticModel)> methods,
+      string name,
+      CancellationToken cancellationToken)
+   {
+      var (_, declaration, semanticModel) = methods.Single(m => m.Name == name);
+      return AnalysisHelpers.CalculateCognitiveComplexity(declaration, semanticModel, cancellationToken);
+   }
+
+   private static Dictionary<string, int> MeasureCycleOrderMethods(
+      List<(string Name, SyntaxNode Declaration, SemanticModel SemanticModel)> methods,
+      IEnumerable<string> order)
+   {
+      return order.ToDictionary(name => name, name => MeasureCycleOrderMethod(methods, name, CancellationToken.None));
    }
 
    /// <summary>
