@@ -17,4 +17,4 @@ Commit cc318e2. One review round (bugs): APPROVED, no findings.
 dotlens-jxhi — a document removed by sync is later deleted from the project file by `TryApplyChanges` (pre-existing, found by the review).
 Not filed: the path dictionary compares case-sensitively on Linux while `GetDocumentIdsWithFilePath` ignores case; on a case-sensitive file system that is correct.
 
-## Open questions
+## Open questions (filed: dotlens-0vlu)

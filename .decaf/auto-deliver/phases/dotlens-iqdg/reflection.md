@@ -16,8 +16,7 @@ Commit 5a6d1e5. Reviews: bugs (APPROVED, 1M), bugs re-review (APPROVED, 2M+4L, r
 
 None.
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### Base operators stay in inherited member lists
 - **Kind:** confirm
 - **From:** dotlens-iqdg; `src/DotLens/Infrastructure/RoslynHelpers.cs`

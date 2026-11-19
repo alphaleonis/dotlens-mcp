@@ -15,8 +15,7 @@ Commit ff96186. Reviews: bugs (NEEDS_CHANGES, 1H+1M+1L), bugs re-review (APPROVE
 
 None filed. Known misses, all in the "not reported" direction: a call to a sibling implementation marks every implementation of that member used; `new List<T>()` counts as handing T over; markup-bound members (XAML) are not modeled.
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### find_unused_code now reports by reachability from roots
 - **Kind:** confirm
 - **From:** dotlens-gsy6 / dotlens-uk3e; `src/DotLens/Tools/Analysis/UsageAnalysis.cs`, `FrameworkEntryPoints.cs`

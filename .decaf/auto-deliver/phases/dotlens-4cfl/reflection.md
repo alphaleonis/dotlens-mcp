@@ -17,8 +17,7 @@ Commit 3f6876a. Reviews: bugs (APPROVED, 1 Medium@50 + 1 Low), bugs re-review (A
 
 dotlens-zwvv (static and alias usings not grouped as Roslyn groups them).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### Using order follows Roslyn's Organize Imports, not ordinal
 - **Kind:** confirm
 - **From:** dotlens-4cfl; `src/DotLens/Tools/Shared/UsingDirectiveLayout.cs`

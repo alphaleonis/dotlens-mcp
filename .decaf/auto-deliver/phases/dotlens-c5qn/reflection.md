@@ -18,8 +18,7 @@ Commit f7cabe9. Reviews: bugs (APPROVED, 1M+2L), bugs re-review (APPROVED, 2M+2L
 
 dotlens-57wx (partial TryApplyChanges failure, no cancellation, placeholder leftovers, SDK outside known installations).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### Write tools now run dotnet msbuild and write Workspace._latestSolution by reflection
 - **Kind:** confirm
 - **From:** dotlens-c5qn; `src/DotLens/Infrastructure/DocumentChangePlan.cs`, `EvaluatedCompileItems.cs`, `WorkspaceManager.cs`

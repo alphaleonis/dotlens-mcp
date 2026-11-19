@@ -16,8 +16,7 @@ Commit 49df3cd. Reviews: bugs (APPROVED, 1 Medium), bugs re-review (APPROVED, 2 
 
 dotlens-c293 (duplicate check for static/alias/global/namespace-scoped usings; organize_usings reformats the whole file; whole-file #if placement).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### add_using refuses when the new using would precede a #define inside an #if
 - **Kind:** confirm
 - **From:** dotlens-p6xt; `src/DotLens/Tools/Shared/UsingDirectiveLayout.cs`

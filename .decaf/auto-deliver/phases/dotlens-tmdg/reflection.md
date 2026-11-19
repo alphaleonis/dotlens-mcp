@@ -21,8 +21,7 @@ The gap is in Roslyn 5.12 (`PropertySymbolReferenceFinder.ComputeConditionalAcce
 
 dotlens-9zjg (sync_documents leaves linked copies stale), dotlens-cr8j (references duplicated per linked copy), dotlens-6nks (source-generated references counted but not listed). Not filed: VB null-conditional indexers (DotLens has no VB support).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### File the Roslyn null-conditional indexer gap upstream?
 - **Kind:** decision
 - **From:** dotlens-tmdg; `src/DotLens/Tools/Shared/ReferenceSearch.cs`

@@ -14,8 +14,7 @@
 
 dotlens-gsy6 (reflection-invoked members), dotlens-uk3e (mutually recursive members).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### find_unused_code no longer counts a member's or type's references to itself
 - **Kind:** confirm
 - **From:** dotlens-pvb8; `src/DotLens/Tools/Analysis/FindUnusedCodeTool.cs`

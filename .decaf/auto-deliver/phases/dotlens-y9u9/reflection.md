@@ -12,8 +12,7 @@
 
 dotlens-iqdg, dotlens-p0yq, dotlens-ynf5 (bugs, in this run's scope), dotlens-ljme (feature, out of scope). Note on dotlens-nvro (block declaration string).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### Inherited member lists now include static members in both member tools
 - **Kind:** confirm
 - **From:** dotlens-y9u9; `RoslynHelpers.GetTypeMembers`, `get_type_members`, `get_type_members_batch`

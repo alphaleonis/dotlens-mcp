@@ -16,8 +16,7 @@ Commit a2f0f5a. Reviews: bugs (NEEDS_CHANGES, 1 High), bugs re-review (NEEDS_CHA
 
 None.
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### A bare name prefers the non-generic variant
 - **Kind:** confirm
 - **From:** dotlens-k6gs; `src/DotLens/Infrastructure/SymbolLookup/SymbolLookupService.cs`

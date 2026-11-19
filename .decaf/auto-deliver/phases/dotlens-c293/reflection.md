@@ -17,8 +17,7 @@ Commit 5de4d65. Reviews: bugs (APPROVED, 2 Medium + 1 Low), bugs re-review (APPR
 
 dotlens-4cfl (culture-sensitive sort, unvalidated namespace argument, extern alias collision, U+2028/U+0085 line breaks, whole-compilation diagnostics per document).
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### organize_usings no longer formats anything
 - **Kind:** confirm
 - **From:** dotlens-c293; `src/DotLens/Tools/Formatting/OrganizeUsingsTool.cs`

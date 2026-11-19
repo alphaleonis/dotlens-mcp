@@ -15,8 +15,7 @@ Commit a530343. One review round (bugs): APPROVED with one Low (a test pinned Ro
 
 dotlens-p6xt (add_using CRLF, organize_usings blank first line), dotlens-c5qn (removing a document deletes a shared file / throws on SDK-included files). Not filed: `Dispose` clears state without the write lock (shutdown only); duplicated `FindRepoRoot` test helper.
 
-## Open questions
-
+## Open questions (filed: dotlens-0vlu)
 ### Reflection on Workspace.SetCurrentSolution
 - **Kind:** confirm
 - **From:** dotlens-jxhi; `src/DotLens/Infrastructure/WorkspaceManager.cs`
