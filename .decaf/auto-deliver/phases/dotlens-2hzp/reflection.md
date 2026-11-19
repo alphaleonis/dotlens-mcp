@@ -17,7 +17,7 @@ Commit 60c2a04. Reviews: bugs (APPROVED, 2M+1L, all fixed test-first), bugs rost
 
 - dotlens-zp7k — organize_usings sorts within directive-split using lists that Roslyn leaves unsorted (draft; pre-existing behavior).
 
-## Open questions
+## Open questions (filed: dotlens-5he7)
 
 ### Organize usings drops blank lines from unsorted lists at default options
 - **Kind:** confirm

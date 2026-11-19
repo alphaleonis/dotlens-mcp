@@ -22,7 +22,7 @@ Commit 7430e81. Reviews: bugs (NEEDS_CHANGES, 1H accessors not nodes + 1M implic
 
 None filed. Raised with the operator: position lookup at a record's positional parameter resolves the parameter, not the property search_symbols reports there (found when a fixture's `record R(int Id)` broke FindCallers_OnProperty_FindsUsages).
 
-## Open questions
+## Open questions (filed: dotlens-5he7)
 
 ### Cognitive complexity builds a whole-compilation call graph on first use
 - **Kind:** confirm

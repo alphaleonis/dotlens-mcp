@@ -18,7 +18,7 @@ Commit a5f2dce. Review: bugs (APPROVED, 1 Medium: file the indirect-recursion ni
 
 - dotlens-0zzn — Cognitive complexity does not count indirect recursion (draft).
 
-## Open questions
+## Open questions (filed: dotlens-5he7)
 
 ### Cognitive complexity follows the white paper where SonarC# differs
 - **Kind:** confirm

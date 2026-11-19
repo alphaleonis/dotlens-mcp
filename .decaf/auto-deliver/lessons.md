@@ -114,3 +114,7 @@
 
 ## dotlens-eyrn (2026-11-19)
 - A documentation ID is not a declaration identity: same-named local functions and same-assembly-name projects share one. Group "same declaration" by symbol equality or by kind+name+file+span.
+
+## Directive-split usings — zp7k, s5uh (2026-11-19)
+- Asking the implementer to run a table of input shapes through Roslyn before coding worked: one review, no correctness findings, against three to five rounds for dotlens-2hzp in the same file.
+- Per-case solution reloads in theory tests cost minutes; a class fixture with a before/after state check kept isolation at a fraction of the time.

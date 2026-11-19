@@ -20,7 +20,7 @@ Commit 398f9b0. Reviews: bugs (NEEDS_CHANGES, 1H <Main>$ + 2L, all fixed), bugs 
 
 None filed. Awareness: declaration matching compares paths case-insensitively, so two Linux files differing only in case with a same-named member at the same span would merge (pre-existing convention from GetDocumentIdsWithFilePath). find_callers omits nameof uses that find_references lists.
 
-## Open questions
+## Open questions (filed: dotlens-5he7)
 
 ### Callers in top-level statements are reported without a calling member
 - **Kind:** confirm

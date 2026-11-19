@@ -20,7 +20,7 @@ Review: bugs (APPROVED, 3 Low: doc fixed, commit-message rule done, backing-fiel
 - dotlens-eyrn — find_callers names a compiler-generated backing field as the caller of a read in a property initializer.
 - Raised with the operator, not filed (pre-existing): rename_symbol preview reports the whole file as one change at 1:1; get_type_members reports a line but no column; a parameter's symbol response reports kind "unknown".
 
-## Open questions
+## Open questions (filed: dotlens-5he7)
 
 ### A position lookup at a positional parameter now returns the property
 - **Kind:** confirm
