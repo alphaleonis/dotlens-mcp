@@ -106,6 +106,7 @@ public class GetComplexityMetricsTool
    [McpServerTool(Name = "get_complexity_metrics", ReadOnly = true, OpenWorld = false)]
    [Description("""
       Get complexity metrics for methods. Use sortBy and threshold to identify problem areas.
+      Cognitive complexity follows the SonarSource Cognitive Complexity white paper (v1.7); SonarQube's C# analyzer departs from it on goto nesting, static local functions, anonymous methods and recursion, so its numbers can differ.
       Cognitive complexity adds 1 per method in a recursion cycle, following calls as bound at compile time, including property, indexer and event accessors, constructors and the calls of foreach, await, deconstruction and record members; it does not follow overrides or implementations chosen at run time, delegates, dynamic calls or the Dispose of a using statement.
       """)]
    public async Task<ToolResult<IComplexityResponse>> GetComplexityMetricsAsync(
