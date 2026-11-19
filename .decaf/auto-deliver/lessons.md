@@ -86,3 +86,6 @@
 ## find_unused_code group — gsy6, uk3e (2026-11-19)
 - For a tool whose output users delete code on, state the bias up front ("a false unused report is worse than a missed one") in every brief: two rounds of narrowing a rule for precision each brought back false positives until the brief said so.
 - Rules about "is this type handed to a framework" belong to the semantic model, but the syntax walk that finds the owning construct must stop at the reference's own type-name path, or every enclosing generic call matches.
+
+## dotlens-jadz (2026-11-19)
+- An end-to-end test through the real server and worker found a startup bug (worker spawn under `dotnet DotLens.dll`) that every in-process test missed; the server/worker boundary needs at least one such test per reply shape.
