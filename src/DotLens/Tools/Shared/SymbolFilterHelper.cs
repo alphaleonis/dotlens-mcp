@@ -146,6 +146,7 @@ public static class SymbolFilterHelper
          ModifierFilter.Extern => SymbolModifiers.Extern,
          ModifierFilter.Required => SymbolModifiers.Required,
          ModifierFilter.Record => SymbolModifiers.Record,
+         ModifierFilter.Union => SymbolModifiers.Union,
          _ => throw new ArgumentOutOfRangeException(nameof(filter), filter,
             $"Unknown modifier filter: {filter}")
       };

@@ -37,7 +37,7 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          .OfType<string>()
          .Where(path => !path.StartsWith(_fixture.GetPath("obj/"), StringComparison.Ordinal))
          .Select(Path.GetFileName);
-      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs", "NullConditionalIndexers.cs", "DeclarationFidelity.cs", "OutlineFidelity.cs", "PartialBaseLists.cs" }, sourceFiles, strict: true);
+      Assert.Equivalent(new[] { "Unions.cs", "LabeledLoops.cs", "ExtensionIndexer.cs", "ExtensionMembers.cs", "ExtensionBlockHeaders.cs", "MultiLineSignatures.cs", "RefReceiverExtensions.cs", "PrimaryConstructors.cs", "IndexerUses.cs", "IndexerWrites.cs", "AmbiguousMembers.cs", "EnumsAndDelegates.cs", "DelegateSignatures.cs", "InheritedMembers.cs", "AccessorNames.cs", "ExtensionContainers.cs", "ImplicitTypeUses.cs", "SelfReferences.cs", "ModuleInitializers.cs", "SelfReferencingMembers.cs", "AttributedFields.cs", "NullConditionalIndexers.cs", "DeclarationFidelity.cs", "OutlineFidelity.cs", "PartialBaseLists.cs", "CustomUnions.cs" }, sourceFiles, strict: true);
 
       var tool = new GetDiagnosticsTool(_fixture.Workspace);
       var result = await tool.GetDiagnosticsAsync(severity: DiagnosticSeverityDto.Error, cancellationToken: CT);
@@ -437,6 +437,8 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       Assert.True(data.IsSealed);
       Assert.False(data.IsStatic);
       Assert.False(data.IsRecord);
+      Assert.True(data.IsUnion);
+      Assert.Equal(["CSharp15TestProject.Circle", "CSharp15TestProject.Square"], data.UnionCaseTypes);
       Assert.Equal(["System.ValueType"], data.BaseTypes);
       Assert.Equal(["System.Runtime.CompilerServices.IUnion"], data.Interfaces);
       // The compiler synthesizes the Value property, one constructor per case type, and the default struct constructor.
@@ -449,6 +451,116 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
          new LookupByPosition { FilePath = _fixture.GetPath("Unions.cs"), Line = 7, Column = 14 },
          cancellationToken: CT);
       Assert.Equivalent(data, byPosition.Data, strict: true);
+   }
+
+   [Theory]
+   [InlineData("Shape", ToolResultVerbosity.Summary, "Struct", new[] { "CSharp15TestProject.Circle", "CSharp15TestProject.Square" })]
+   [InlineData("Shape", ToolResultVerbosity.Compact, "Struct", new[] { "CSharp15TestProject.Circle", "CSharp15TestProject.Square" })]
+   [InlineData("Shape", ToolResultVerbosity.Full, "Struct", new[] { "CSharp15TestProject.Circle", "CSharp15TestProject.Square" })]
+   [InlineData("Outcome", ToolResultVerbosity.Compact, "Struct", new[] { "T", "string" })]
+   [InlineData("Quantity", ToolResultVerbosity.Compact, "Struct", new[] { "int", "double" })]
+   [InlineData("Voucher", ToolResultVerbosity.Compact, "Struct", new[] { "int", "string" })]
+   [InlineData("Reply", ToolResultVerbosity.Summary, "Class", new[] { "int" })]
+   [InlineData("Reply", ToolResultVerbosity.Compact, "Class", new[] { "int" })]
+   public async Task TypeOverview_UnionReportsCaseTypes(string name, ToolResultVerbosity verbosity, string typeKind, string[] caseTypes)
+   {
+      var tool = new GetTypeOverviewTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetTypeOverviewAsync(new LookupByName { Name = name }, verbosity, CT);
+
+      Assert.Equal(typeKind, result.Data.TypeKind);
+      Assert.True(result.Data.IsUnion);
+      Assert.Equal(caseTypes, result.Data.UnionCaseTypes);
+   }
+
+   [Theory]
+   [InlineData(ToolResultVerbosity.Summary)]
+   [InlineData(ToolResultVerbosity.Compact)]
+   [InlineData(ToolResultVerbosity.Full)]
+   public async Task TypeOverview_UnionCaseTypes_NullForNonUnionStruct(ToolResultVerbosity verbosity)
+   {
+      var tool = new GetTypeOverviewTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetTypeOverviewAsync(new LookupByName { Name = "Size" }, verbosity, CT);
+
+      Assert.Equal("CSharp15TestProject.Size", result.Data.FullyQualifiedName);
+      Assert.Equal("Struct", result.Data.TypeKind);
+      Assert.False(result.Data.IsUnion);
+      Assert.Null(result.Data.UnionCaseTypes);
+   }
+
+   [Theory]
+   [InlineData("Shape", "public union Shape(Circle, Square)", SymbolModifiers.Sealed | SymbolModifiers.Union)]
+   [InlineData("Outcome", "public union Outcome<T>(T, string) where T : class", SymbolModifiers.Sealed | SymbolModifiers.Union)]
+   [InlineData("Quantity", "public readonly union Quantity(int, double)", SymbolModifiers.Sealed | SymbolModifiers.ReadOnly | SymbolModifiers.Union)]
+   public async Task SymbolInfo_UnionDeclaration(string name, string declaration, SymbolModifiers modifiers)
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(new LookupByName { Name = name }, cancellationToken: CT);
+
+      var symbol = Assert.IsType<StructSymbolResponse>(result.Data);
+      Assert.Equal(declaration, symbol.Declaration);
+      Assert.Equal(modifiers, symbol.Modifiers);
+   }
+
+   /// <summary>
+   /// Custom unions declared with the Union attribute, which a struct or a class can carry.
+   /// </summary>
+   [Theory]
+   [InlineData("Voucher", typeof(StructSymbolResponse), "public struct Voucher : IUnion", SymbolModifiers.Sealed | SymbolModifiers.Union)]
+   [InlineData("Reply", typeof(ClassSymbolResponse), "public class Reply : IUnion", SymbolModifiers.Union)]
+   public async Task SymbolInfo_CustomUnionKeepsDeclaredKeyword(string name, Type responseType, string declaration, SymbolModifiers modifiers)
+   {
+      var tool = new GetSymbolInfoTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var result = await tool.GetSymbolInfoAsync(new LookupByName { Name = name }, cancellationToken: CT);
+
+      Assert.IsType(responseType, result.Data);
+      Assert.Equal(declaration, result.Data.Declaration);
+      Assert.Equal(modifiers, result.Data.Modifiers);
+   }
+
+   private static readonly string[] AllUnionTypes =
+   [
+      "class CustomUnions.cs:20:14 Reply",
+      "struct CustomUnions.cs:10:15 Voucher",
+      "struct CustomUnions.cs:5:14 Outcome",
+      "struct CustomUnions.cs:7:23 Quantity",
+      "struct Unions.cs:7:14 Shape",
+   ];
+
+   [Fact]
+   public async Task SearchSymbols_UnionModifierFilter()
+   {
+      var tool = new SearchSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.SearchSymbolsAsync("*", modifiers: [ModifierFilter.Union], maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllUnionTypes, result.Data.Items.Select(FormatKindPositionAndName).Order(StringComparer.Ordinal));
+   }
+
+   [Fact]
+   public async Task FindSymbols_UnionModifierFilter()
+   {
+      var tool = new FindSymbolsTool(_fixture.Workspace);
+
+      var result = await tool.FindSymbolsAsync(modifiers: [ModifierFilter.Union], maxResults: 500, cancellationToken: CT);
+
+      Assert.False(result.Data.HasMore);
+      Assert.Equal(AllUnionTypes, result.Data.Items.Select(FormatKindPositionAndName).Order(StringComparer.Ordinal));
+   }
+
+   private static string FormatKindPositionAndName(SymbolResponse symbol)
+   {
+      var kind = symbol switch
+      {
+         StructSymbolResponse => "struct",
+         ClassSymbolResponse => "class",
+         _ => throw new InvalidOperationException($"{symbol.Name} is a {symbol.GetType().Name}, not a struct or a class"),
+      };
+      return $"{kind} {FormatPositionAndName(symbol)}";
    }
 
    [Fact]
@@ -1999,6 +2111,12 @@ public class CSharp15FixtureTests : IClassFixture<CSharp15FixtureWorkspace>
       "AttributedFields.cs:19:25 Label",
       "AttributedFields.cs:5:21 AttributedFields",
       "AttributedFields.cs:8:22 Tag",
+      "CustomUnions.cs:10:15 Voucher",
+      "CustomUnions.cs:16:19 Value",
+      "CustomUnions.cs:20:14 Reply",
+      "CustomUnions.cs:24:19 Value",
+      "CustomUnions.cs:5:14 Outcome",
+      "CustomUnions.cs:7:23 Quantity",
       "DeclarationFidelity.cs:10:14 Inventory",
       "DeclarationFidelity.cs:12:16 _count",
       "DeclarationFidelity.cs:14:19 Count",

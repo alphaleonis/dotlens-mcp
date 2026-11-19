@@ -1,4 +1,5 @@
 using DotLens.Infrastructure;
+using DotLens.Tools.Shared;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
@@ -375,6 +376,68 @@ public class Derived : Base { }";
    }
 
    /// <summary>
+   /// Unions compiled into a referenced assembly. Metadata holds a union declaration and a custom union struct as the same
+   /// struct with the Union attribute.
+   /// </summary>
+   [Theory]
+   [InlineData("Shape", "public struct Shape : IUnion")]
+   [InlineData("Custom", "public struct Custom : IUnion")]
+   public async Task Declaration_MetadataUnionKeepsStructKeyword(string typeName, string expected)
+   {
+      var references = ReferencePackReferences();
+      var reference = EmitLibrary("CompiledUnions", """
+         using System.Runtime.CompilerServices;
+         public record Circle(double Radius);
+         public record Square(double Side);
+         public union Shape(Circle, Square);
+         [Union] public struct Custom : IUnion { public Custom(int number) => Value = number; public object? Value { get; } }
+         """, references);
+      var consumer = CSharpCompilation.Create("Consumer", references: [.. references, reference]);
+      var type = consumer.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the reference");
+      Assert.Empty(type.DeclaringSyntaxReferences);
+
+      using var workspace = new AdhocWorkspace();
+      Assert.Equal(expected, await RoslynHelpers.GetDeclarationAsync(type, workspace.CurrentSolution, TestContext.Current.CancellationToken));
+      Assert.Equal(SymbolModifiers.Sealed | SymbolModifiers.Union, RoslynHelpers.GetSymbolModifiers(type));
+   }
+
+   /// <summary>
+   /// A partial union with its case list on the second part, a nested union, and unions with a base list, the readonly
+   /// modifier or an attribute.
+   /// </summary>
+   [Theory]
+   [InlineData("Split", "public union Split(int, string)")]
+   [InlineData("Outer+Nested", "public union Nested(int, string)")]
+   [InlineData("Measured", "public union Measured(int, string) : IMeasured")]
+   [InlineData("Frozen", "public readonly union Frozen(int, string)")]
+   [InlineData("Flagged", "public union Flagged(int, string)")]
+   public async Task Declaration_SourceUnionPrintsUnionKeyword(string typeName, string expected)
+   {
+      var cancellationToken = TestContext.Current.CancellationToken;
+      using var workspace = new AdhocWorkspace();
+      var projectId = ProjectId.CreateNewId();
+      var solution = workspace.CurrentSolution
+         .AddProject(ProjectInfo.Create(projectId, VersionStamp.Create(), "Unions", "Unions", LanguageNames.CSharp,
+            compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable),
+            parseOptions: new CSharpParseOptions(LanguageVersion.Preview),
+            metadataReferences: ReferencePackReferences()))
+         .AddDocument(DocumentId.CreateNewId(projectId), "Unions.cs", """
+            public interface IMeasured { }
+            public partial union Split { public int Size => 0; }
+            public partial union Split(int, string);
+            public class Outer { public union Nested(int, string); }
+            public union Measured(int, string) : IMeasured;
+            public readonly union Frozen(int, string);
+            [System.Obsolete] public union Flagged(int, string);
+            """);
+      var compilation = await GetCompilationAsync(solution, projectId, cancellationToken);
+      Assert.Empty(compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error));
+      var type = compilation.GetTypeByMetadataName(typeName) ?? throw new InvalidOperationException($"{typeName} is not in the source");
+
+      Assert.Equal(expected, await RoslynHelpers.GetDeclarationAsync(type, solution, cancellationToken));
+   }
+
+   /// <summary>
    /// List of T implements the indexer of IList explicitly, and metadata reports its accessors as explicit implementations.
    /// </summary>
    [Fact]
@@ -414,12 +477,12 @@ public class Derived : Base { }";
       return await project.GetCompilationAsync(cancellationToken) ?? throw new InvalidOperationException($"{project.Name} has no compilation");
    }
 
-   private static MetadataReference EmitLibrary(string assemblyName, string source)
+   private static MetadataReference EmitLibrary(string assemblyName, string source, MetadataReference[]? references = null)
    {
       var library = CSharpCompilation.Create(
          assemblyName,
          [CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview), cancellationToken: TestContext.Current.CancellationToken)],
-         TestHelpers.CoreReferences,
+         references ?? TestHelpers.CoreReferences,
          new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
       using var image = new MemoryStream();
       var emitted = library.Emit(image, cancellationToken: TestContext.Current.CancellationToken);

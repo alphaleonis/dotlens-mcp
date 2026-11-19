@@ -21,6 +21,9 @@ public record TypeOverviewResponse
    public required bool IsSealed { get; init; }
    public required bool IsStatic { get; init; }
    public required bool IsRecord { get; init; }
+   public required bool IsUnion { get; init; }
+   /// <summary>Case types of a union, or null when the type is not a union.</summary>
+   public IReadOnlyList<string>? UnionCaseTypes { get; init; }
    /// <summary>First 3 base types (null for summary verbosity).</summary>
    public IReadOnlyList<string>? BaseTypes { get; init; }
    /// <summary>Directly implemented interfaces (null for summary verbosity).</summary>
@@ -71,7 +74,7 @@ public class GetTypeOverviewTool
    }
 
    [McpServerTool(Name = "get_type_overview", ReadOnly = true, OpenWorld = false)]
-   [Description("Get type overview: modifiers, base types (first 3), interfaces, and member counts.")]
+   [Description("Get type overview: modifiers, base types (first 3), interfaces, union case types, and member counts.")]
    public async Task<ToolResult<TypeOverviewResponse>> GetTypeOverviewAsync(
       [Description("Type to get overview for")] SymbolLookup target,
       [Description("Response detail level.")]
@@ -148,6 +151,8 @@ public class GetTypeOverviewTool
             IsSealed = typeSymbol.IsSealed,
             IsStatic = typeSymbol.IsStatic,
             IsRecord = typeSymbol.IsRecord,
+            IsUnion = typeSymbol.IsUnion,
+            UnionCaseTypes = typeSymbol.IsUnion ? typeSymbol.UnionCaseTypes.Select(t => t.ToDisplayString()).ToList() : null,
             BaseTypes = baseTypes,
             Interfaces = interfaces,
             MemberCounts = memberCounts,

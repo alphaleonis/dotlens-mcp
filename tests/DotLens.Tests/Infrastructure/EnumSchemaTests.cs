@@ -99,6 +99,7 @@ public class EnumSchemaTests
       Assert.Contains("\"abstract\"", schemaJson);
       Assert.Contains("\"async\"", schemaJson);
       Assert.Contains("\"record\"", schemaJson);
+      Assert.Contains("\"union\"", schemaJson);
 
       // Verify ReadOnly uses explicit [JsonStringEnumMemberName("readonly")] - lowercase, no camelCase
       Assert.Contains("\"readonly\"", schemaJson);

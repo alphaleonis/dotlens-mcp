@@ -1157,6 +1157,8 @@ public static class RoslynHelpers
             modifiers |= SymbolModifiers.Partial;
          if (namedType.IsRecord)
             modifiers |= SymbolModifiers.Record;
+         if (namedType.IsUnion)
+            modifiers |= SymbolModifiers.Union;
          if (namedType.IsReadOnly)
             modifiers |= SymbolModifiers.ReadOnly;
       }
@@ -1327,6 +1329,8 @@ public static class RoslynHelpers
       sb.Append(type.TypeKind switch
       {
          TypeKind.Class when !type.IsRecord => "class ",
+         // Metadata holds a union declaration as a struct with the Union attribute, the same as a custom union struct.
+         TypeKind.Struct when declarations.Any(d => d is UnionDeclarationSyntax) => "union ",
          TypeKind.Struct => "struct ",
          TypeKind.Interface => "interface ",
          TypeKind.Enum => "enum ",

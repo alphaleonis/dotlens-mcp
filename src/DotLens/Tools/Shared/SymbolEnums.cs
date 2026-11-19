@@ -59,7 +59,8 @@ public enum SymbolModifiers
    Volatile = 1 << 9,
    Extern = 1 << 10,
    Required = 1 << 11,
-   Record = 1 << 12 // record class or record struct
+   Record = 1 << 12, // record class or record struct
+   Union = 1 << 13 // union declaration, or a struct or class with the Union attribute
 }
 
 /// <summary>
@@ -89,7 +90,8 @@ public enum ModifierFilter
    Volatile,
    Extern,
    Required,
-   Record
+   Record,
+   Union
 }
 
 /// <summary>
@@ -112,7 +114,7 @@ public enum ParameterModifiers
 /// </summary>
 /// <remarks>
 /// Note: Records are represented as Class or Struct depending on whether
-/// they are record classes or record structs.
+/// they are record classes or record structs. Unions likewise keep their Struct or Class kind.
 /// </remarks>
 public enum TypeKindDto
 {
@@ -156,6 +158,7 @@ public enum ChangeType
 /// <remarks>
 /// Records are represented as Class or Struct (their underlying TypeKind).
 /// Use SymbolModifiers.Record to check if a type is a record.
+/// Unions keep their Struct or Class kind too, and SymbolModifiers.Union marks them.
 /// </remarks>
 public enum SymbolKindDto
 {
