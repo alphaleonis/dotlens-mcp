@@ -111,3 +111,6 @@
 
 ## dotlens-mudz (2026-11-19)
 - A test that asserts current output to document behavior can pin a bug; when a review flags one, file the bug and reference it in the commit so the expectation is not mistaken for intent.
+
+## dotlens-eyrn (2026-11-19)
+- A documentation ID is not a declaration identity: same-named local functions and same-assembly-name projects share one. Group "same declaration" by symbol equality or by kind+name+file+span.
