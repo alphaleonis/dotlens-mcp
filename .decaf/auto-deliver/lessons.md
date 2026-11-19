@@ -108,3 +108,6 @@
 ## dotlens-nqd2 (2026-11-19)
 - A mechanical async conversion across 49 call sites passed one review with no findings when the brief named the one judgment per call site (which solution the symbol came from).
 - Renaming a parameter by sed missed named-argument call sites in tests; use rename_symbol for any rename, even a one-file one.
+
+## dotlens-mudz (2026-11-19)
+- A test that asserts current output to document behavior can pin a bug; when a review flags one, file the bug and reference it in the commit so the expectation is not mistaken for intent.
