@@ -89,3 +89,6 @@
 
 ## dotlens-jadz (2026-11-19)
 - An end-to-end test through the real server and worker found a startup bug (worker spawn under `dotnet DotLens.dll`) that every in-process test missed; the server/worker boundary needs at least one such test per reply shape.
+
+## dotlens-w6b1 — cognitive complexity (2026-11-19)
+- A spec-conformance bug goes fastest when the implementer reads the reference implementation (SonarC# via gh api) beside the spec: it settled two open decisions and exposed where the reference itself departs from the spec. One implementer pass and one approving review, about 20 minutes.
