@@ -378,7 +378,8 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
    }
 
    // The workspace saves the project file it edits with a UTF-8 byte order mark.
-   private static byte[] LibProjectBytesWithListed => [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(LibProjectTextWithListed)];
+   private static byte[] LibProjectBytesWithListed => [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(
+      LibProjectTextWithListed.Replace("Explicit/Listed.cs", WorkspaceInclude("Explicit/Listed.cs"), StringComparison.Ordinal))];
 
    [Fact]
    public async Task ApplyChanges_AddDocument_OutsideGlob_ListsItInProjectFile()
@@ -685,7 +686,8 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
 
       Assert.True(applied);
       // The workspace saves the project file with a byte order mark when it adds the reference.
-      byte[] expectedBytes = [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(MtProjectTextWithReference)];
+      byte[] expectedBytes = [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(
+         MtProjectTextWithReference.Replace("../One/One.csproj", WorkspaceInclude("../One/One.csproj"), StringComparison.Ordinal))];
       Assert.Equal(expectedBytes, await File.ReadAllBytesAsync(MtProjectPath, CT));
       Assert.False(File.Exists(polyfillPath));
       Assert.Empty(ProjectNamesCompiling(polyfillPath));
@@ -774,10 +776,14 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       Assert.True(applied);
       Assert.Equal(ClassText("Shared", "Twice"), await File.ReadAllTextAsync(addedPath, CT));
       Assert.Equal(["Mt(net10.0)", "Mt(net11.0)"], ProjectNamesCompiling(addedPath));
-      byte[] expectedBytes = [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(MtProjectText.Replace(
-         "    <Compile Include=\"../Shared/Linked.cs\" />\n",
-         "    <Compile Include=\"../Shared/Linked.cs\" />\n    <Compile Include=\"../Shared/Twice.cs\" />\n",
-         StringComparison.Ordinal))];
+      byte[] expectedBytes = [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(MtProjectText.Replace("""
+             <Compile Include="../Shared/Linked.cs" />
+
+         """, $"""
+             <Compile Include="../Shared/Linked.cs" />
+             <Compile Include="{WorkspaceInclude("../Shared/Twice.cs")}" />
+
+         """, StringComparison.Ordinal))];
       Assert.Equal(expectedBytes, await File.ReadAllBytesAsync(MtProjectPath, CT));
       Assert.Equal((0, ""), await RunCheckForDuplicateItemsAsync(MtProjectPath, "net10.0"));
       Assert.Equal((0, ""), await RunCheckForDuplicateItemsAsync(MtProjectPath, "net11.0"));
@@ -983,6 +989,8 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       var addedPath = Path.Combine(TempDir, "Lib", "Explicit", "Listed.cs");
       var projectBytes = await ReadProjectBytesAsync();
       var solution = Workspace.EnsureSolutionLoaded();
+      // The OS words the error, so the expected reason comes from the same failed call.
+      var createError = Assert.Throws<IOException>(() => Directory.CreateDirectory(objPath));
 
       var ex = await Assert.ThrowsAsync<ToolException>(
          () => ApplyAdditionAsync("Lib", "Listed.cs", ["Explicit"], addedPath, ClassText("Lib", "Listed")));
@@ -990,7 +998,7 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
       Assert.Equal(ErrorCodes.ApplyChangesFailed, ex.Code);
       Assert.Equal(
          $"Cannot add documents to project Lib: the journal of its placeholder files could not be written to {Workspace.FormatPath(objPath)} "
-            + $"(The file '{objPath}' already exists.).",
+            + $"({createError.Message}).",
          ex.Message);
       Assert.Equal(AdditionHint, ex.Hint);
       Assert.False(File.Exists(addedPath));
@@ -1132,6 +1140,17 @@ public sealed class ApplyChangesDocumentFilesTests : IAsyncLifetime
    }
 
    private string SharedFilePath(string name) => Path.Combine(TempDir, "Shared", name + ".cs");
+
+   /// <summary>
+   /// Returns the path as the workspace writes it into an item's Include, with the platform's directory separator.
+   /// </summary>
+   /// <remarks>
+   /// The workspace takes the Include from PathUtilities.GetRelativePath:
+   /// https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Workspaces/MSBuild/BuildHost/MSBuild/ProjectFile/ProjectFile.cs#L65
+   /// That method joins the parts with Path.DirectorySeparatorChar:
+   /// https://github.com/dotnet/roslyn/blob/1324e1d34a0490454837a22370e75bbaeecffb87/src/Compilers/Core/Portable/FileSystem/PathUtilities.cs#L28-L32
+   /// </remarks>
+   private static string WorkspaceInclude(string path) => path.Replace('/', Path.DirectorySeparatorChar);
 
    private static string ClassText(string ns, string name) => $"namespace {ns};\n\npublic static class {name}\n{{\n}}\n";
 

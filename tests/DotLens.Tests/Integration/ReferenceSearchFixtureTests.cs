@@ -295,8 +295,8 @@ public class ReferenceSearchFixtureTests : IClassFixture<ReferenceSearchFixtureW
    }
 
    // The workspace gives a generated document a path under the target's intermediate directory.
-   private static string GeneratedPath => Path.Combine(
-      "obj", "Debug", "net10.0", "Microsoft.Interop.LibraryImportGenerator", "Microsoft.Interop.LibraryImportGenerator", "LibraryImports.g.cs");
+   private const string GeneratedPath =
+      "obj/Debug/net10.0/Microsoft.Interop.LibraryImportGenerator/Microsoft.Interop.LibraryImportGenerator/LibraryImports.g.cs";
 
    private async Task AssertReferencesAsync(SymbolLookup lookup, params (string File, int Line, int Column, ReferenceKind Kind)[] expected)
    {

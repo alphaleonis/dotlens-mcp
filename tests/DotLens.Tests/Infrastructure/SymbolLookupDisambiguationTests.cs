@@ -543,7 +543,7 @@ public class SymbolLookupDisambiguationTests : TestFixtureTestBase
          strict: true);
       Assert.Equal(ErrorCodes.AmbiguousSymbol, ex.Code);
       Assert.Equal(
-         $"Multiple symbols found (2): CoreTestProject.Types.AmbiguousTestClass at {Path.Combine("CoreTestProject", "Types", "Classes.cs")}:96:14; CoreTestProject.Types.AmbiguousTestClass at {Path.Combine("ConflictingTypesProject", "ConflictingTypes.cs")}:14:14",
+         "Multiple symbols found (2): CoreTestProject.Types.AmbiguousTestClass at CoreTestProject/Types/Classes.cs:96:14; CoreTestProject.Types.AmbiguousTestClass at ConflictingTypesProject/ConflictingTypes.cs:14:14",
          ex.Message);
    }
 

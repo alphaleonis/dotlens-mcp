@@ -15,7 +15,7 @@ public static class AmbiguityRoundTrip
    /// finds that candidate alone when its parameter list moves to parameterTypes, its return type to returnType, its
    /// location to position mode, or its project to project.
    /// </summary>
-   /// <param name="expected">The listed candidates, without the count of those left out, with each path's separators as '/'.</param>
+   /// <param name="expected">The listed candidates, without the count of those left out.</param>
    public static async Task AssertEachListedCandidateFindsItselfAsync(
       SymbolLookupService service,
       LookupByName lookup,
@@ -31,7 +31,7 @@ public static class AmbiguityRoundTrip
          .Where(candidate => !candidate.StartsWith("and ", StringComparison.Ordinal))
          .ToList();
       Assert.Equal(ErrorCodes.AmbiguousSymbol, ex.Code);
-      Assert.Equal(expected.Select(c => c.Replace('/', Path.DirectorySeparatorChar)), listed);
+      Assert.Equal(expected, listed);
       Assert.Equal(Math.Min(matches.Count, 5), listed.Count);
       for (var i = 0; i < listed.Count; i++)
       {
