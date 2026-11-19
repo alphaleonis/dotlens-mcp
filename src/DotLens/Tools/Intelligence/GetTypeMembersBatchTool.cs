@@ -25,7 +25,7 @@ public class GetTypeMembersBatchTool
    [Description("Get members for multiple types in a single call. Batch alternative to multiple get_type_members calls.")]
    public async Task<ToolResult<TypeMembersBatchResponse>> GetTypeMembersBatchAsync(
       [Description("Array of type names to look up")] List<string> typeNames,
-      [Description("Filter by member kind")]
+      [Description("Filter by member kind. nestedType selects nested types of every type kind.")]
       MemberKindFilter? memberKind = null,
       [Description("Also list members inherited from base classes other than object, static ones included. Members the type cannot access, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,

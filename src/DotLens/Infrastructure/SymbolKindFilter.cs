@@ -25,13 +25,20 @@ public enum SymbolKindFilter
 }
 
 /// <summary>
-/// Filter for member kinds in type member listing operations.
-/// Subset of SymbolKindFilter containing only member kinds.
+/// Filter for the member kinds that the type member tools report, as <see cref="RoslynHelpers.GetMemberKindString"/> names them.
 /// </summary>
 public enum MemberKindFilter
 {
    Method,
    Property,
    Field,
-   Event
+   Event,
+   Constructor,
+   Destructor,
+   Operator,
+   Conversion,
+   Accessor,
+
+   /// <summary>Every nested type, whatever its type kind.</summary>
+   NestedType
 }

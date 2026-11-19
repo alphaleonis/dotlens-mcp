@@ -546,15 +546,21 @@ public static class RoslynHelpers
    /// </summary>
    public static bool MatchesMemberKind(ISymbol member, MemberKindFilter filter)
    {
-      var kind = filter switch
+      var kind = GetMemberKindString(member);
+      return filter switch
       {
-         MemberKindFilter.Method => "Method",
-         MemberKindFilter.Property => "Property",
-         MemberKindFilter.Field => "Field",
-         MemberKindFilter.Event => "Event",
+         MemberKindFilter.Method => kind == "Method",
+         MemberKindFilter.Property => kind == "Property",
+         MemberKindFilter.Field => kind == "Field",
+         MemberKindFilter.Event => kind == "Event",
+         MemberKindFilter.Constructor => kind == "Constructor",
+         MemberKindFilter.Destructor => kind == "Destructor",
+         MemberKindFilter.Operator => kind == "Operator",
+         MemberKindFilter.Conversion => kind == "Conversion",
+         MemberKindFilter.Accessor => kind == "Accessor",
+         MemberKindFilter.NestedType => member is INamedTypeSymbol,
          _ => throw new ArgumentOutOfRangeException(nameof(filter), filter, "Unexpected member kind filter"),
       };
-      return GetMemberKindString(member) == kind;
    }
 
    /// <summary>

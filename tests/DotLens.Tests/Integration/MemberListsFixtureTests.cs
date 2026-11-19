@@ -2,13 +2,14 @@ using DotLens.Infrastructure;
 using DotLens.Infrastructure.SymbolLookup;
 using DotLens.Tools.Intelligence;
 using DotLens.Tools.Search;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace DotLens.Tests.Integration;
 
 /// <summary>
 /// Covers the member lists of types whose bases sit in other projects or declare operators, the kinds of nested types,
-/// and the base lists of records.
+/// the member kind filter, and the base lists of records.
 /// </summary>
 public class MemberListsFixtureTests : IClassFixture<MemberListsFixtureWorkspace>
 {
@@ -133,17 +134,28 @@ public class MemberListsFixtureTests : IClassFixture<MemberListsFixtureWorkspace
             ["Conversion"] = 1,
          },
          result.Data.MemberCounts);
-      foreach (var (filter, kind) in new[] { (MemberKindFilter.Method, "Method"), (MemberKindFilter.Property, "Property"), (MemberKindFilter.Field, "Field"), (MemberKindFilter.Event, "Event") })
+      var filtersWithoutMembers = new List<MemberKindFilter>();
+      foreach (var filter in Enum.GetValues<MemberKindFilter>())
       {
-         var filtered = await tool.GetTypeMembersAsync(new LookupByName { Name = "Gadget" }, memberKind: filter, cancellationToken: CT);
-         var batchFiltered = await batch.GetTypeMembersBatchAsync(["Gadget"], memberKind: filter, cancellationToken: CT);
+         var matched = new List<string>();
+         foreach (var typeName in (string[])["Gadget", "Quay"])
+         {
+            var all = await tool.GetTypeMembersAsync(new LookupByName { Name = typeName }, cancellationToken: CT);
+            var filtered = await tool.GetTypeMembersAsync(new LookupByName { Name = typeName }, memberKind: filter, cancellationToken: CT);
+            var batchFiltered = await batch.GetTypeMembersBatchAsync([typeName], memberKind: filter, cancellationToken: CT);
 
-         var expected = result.Data.Members.Where(m => m.Kind == kind).Select(m => m.Name).ToList();
-         Assert.NotEmpty(expected);
-         Assert.Equal(expected, filtered.Data.Members.Select(m => m.Name));
-         Assert.Equal(new Dictionary<string, int> { [kind] = expected.Count }, filtered.Data.MemberCounts);
-         Assert.Equal(expected, Assert.Single(batchFiltered.Data.Results).Members.Select(m => m.Name));
+            var expected = all.Data.Members.Where(m => IsReportedAs(filter, m.Kind)).ToList();
+            Assert.Equal(expected.Select(m => m.Name), filtered.Data.Members.Select(m => m.Name));
+            Assert.Equal(expected.CountBy(m => m.Kind).ToDictionary(), filtered.Data.MemberCounts);
+            Assert.Equal(expected.Select(m => m.Name), Assert.Single(batchFiltered.Data.Results).Members.Select(m => m.Name));
+            matched.AddRange(expected.Select(m => m.Name));
+         }
+
+         if (matched.Count == 0)
+            filtersWithoutMembers.Add(filter);
       }
+
+      Assert.Equal([], filtersWithoutMembers);
    }
 
    /// <summary>
@@ -198,6 +210,52 @@ public class MemberListsFixtureTests : IClassFixture<MemberListsFixtureWorkspace
          result.Data.MemberCounts);
       Assert.Equal(7, result.Data.TotalMembers);
       Assert.Equal(expected, Assert.Single(batchResult.Data.Results).Members.Select(m => (m.Name, m.Kind, m.Line)));
+
+      var nested = await tool.GetTypeMembersAsync(new LookupByName { Name = "Harbor" }, memberKind: MemberKindFilter.NestedType, cancellationToken: CT);
+      Assert.Equal(expected, nested.Data.Members.Select(m => (m.Name, m.Kind, m.Line)));
+   }
+
+   /// <summary>
+   /// Quay declares a field and a method beside its nested types, and an extension block, which counts as a nested type.
+   /// </summary>
+   [Fact]
+   public async Task TypeMembers_NestedTypeKinds_FilterLeavesOutOtherMembers()
+   {
+      var tool = new GetTypeMembersTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+      var batch = new GetTypeMembersBatchTool(_fixture.Workspace, new SymbolLookupService(_fixture.Workspace));
+
+      var all = await tool.GetTypeMembersAsync(new LookupByName { Name = "Quay" }, cancellationToken: CT);
+      var result = await tool.GetTypeMembersAsync(new LookupByName { Name = "Quay" }, memberKind: MemberKindFilter.NestedType, cancellationToken: CT);
+      var batchResult = await batch.GetTypeMembersBatchAsync(["Quay"], memberKind: MemberKindFilter.NestedType, cancellationToken: CT);
+
+      Assert.Equal(
+         [
+            ("Depth", "Field", 5),
+            ("Crane", "Class", 7),
+            ("Bollard", "Struct", 9),
+            ("IRope", "Interface", 11),
+            ("Swell", "Enum", 13),
+            ("Horn", "Delegate", 15),
+            ("Ticket", "Struct", 17),
+            ("extension(string)", "Extension", 19),
+            ("Moor", "Method", 24),
+         ],
+         all.Data.Members.Select(m => (m.Name, m.Kind, m.Line)));
+      (string, string, int?)[] expected =
+      [
+         ("Crane", "Class", 7),
+         ("Bollard", "Struct", 9),
+         ("IRope", "Interface", 11),
+         ("Swell", "Enum", 13),
+         ("Horn", "Delegate", 15),
+         ("Ticket", "Struct", 17),
+         ("extension(string)", "Extension", 19),
+      ];
+      Assert.Equal(expected, result.Data.Members.Select(m => (m.Name, m.Kind, m.Line)));
+      Assert.Equal(
+         new Dictionary<string, int> { ["Class"] = 1, ["Struct"] = 2, ["Interface"] = 1, ["Enum"] = 1, ["Delegate"] = 1, ["Extension"] = 1 },
+         result.Data.MemberCounts);
+      Assert.Equal(expected, Assert.Single(batchResult.Data.Results).Members.Select(m => (m.Name, m.Kind, m.Line)));
    }
 
    /// <summary>
@@ -220,6 +278,12 @@ public class MemberListsFixtureTests : IClassFixture<MemberListsFixtureWorkspace
          ],
          types.Select(t => t.Declaration));
    }
+
+   /// <summary>
+   /// Returns whether <paramref name="filter"/> selects members of the reported kind. NestedType selects every type kind.
+   /// </summary>
+   private static bool IsReportedAs(MemberKindFilter filter, string kind) =>
+      filter == MemberKindFilter.NestedType ? Enum.GetNames<TypeKind>().Contains(kind) : kind == filter.ToString();
 
    private async Task<List<(string? ContainingType, string Name, string Kind, int? Line)>> InheritedMembersOfAsync(string typeName)
    {

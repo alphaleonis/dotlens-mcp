@@ -42,12 +42,12 @@ public class GetTypeMembersTool
    /// Get all members of a type.
    /// </summary>
    [McpServerTool(Name = "get_type_members", ReadOnly = true, OpenWorld = false)]
-   [Description("Get all members (methods, properties, fields, events) of a type with optional filtering by kind and inheritance.")]
+   [Description("Get all members (methods, properties, fields, events, constructors, destructors, operators, conversions, accessors and nested types) of a type with optional filtering by kind and inheritance.")]
    public async Task<ToolResult<GetTypeMembersResponse>> GetTypeMembersAsync(
       [Description("Type to get members for")] SymbolLookup target,
       [Description("Also list members inherited from base classes other than object, static ones included. Members the type cannot access, constructors, destructors and members that a more derived class overrides or hides are left out.")]
       bool includeInherited = false,
-      [Description("Filter by member kind")]
+      [Description("Filter by member kind. nestedType selects nested types of every type kind.")]
       MemberKindFilter? memberKind = null,
       [Description("Response detail level.")]
       ToolResultVerbosity verbosity = ToolResultVerbosity.Compact,
@@ -88,8 +88,8 @@ public class GetTypeMembersTool
          },
          suggestedNextTools: new[]
          {
-            "get_method_signature to get detailed parameter info for a specific method",
-            $"get_base_types for {RoslynHelpers.GetName(type)} to see inheritance chain",
+            "get_method_info to get the signatures of a method's overloads",
+            $"get_type_hierarchy for {RoslynHelpers.GetName(type)} to see its base types and interfaces",
             "get_attributes to find decorated members"
          },
          totalCount: totalCount,
