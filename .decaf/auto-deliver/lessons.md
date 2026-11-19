@@ -104,3 +104,7 @@
 - Fixtures added to a shared fixture project can break tests elsewhere (a first-search-result lookup, a maxResults-truncated scan); have implementers who add fixture files run the classes that scan the whole project before handing back.
 - A "compile-time binding" rule needs every compiler-inserted call enumerated up front (accessors, foreach/await/deconstruction patterns, record members, implicit base calls); each review round found another family.
 - When Roslyn exposes no binding, writing the call into a copy of the compilation and binding it there beat a hand-written overload rule, but the copy has to keep the original declaration accessibility.
+
+## dotlens-nqd2 (2026-11-19)
+- A mechanical async conversion across 49 call sites passed one review with no findings when the brief named the one judgment per call site (which solution the symbol came from).
+- Renaming a parameter by sed missed named-argument call sites in tests; use rename_symbol for any rename, even a one-file one.
