@@ -1,12 +1,12 @@
 {
-  "plan": "dotlens-lv16",
+  "plan": "dotlens-nh23",
   "tracker": "nibs",
-  "integration_branch": "deliver/dotlens-lv16",
+  "integration_branch": "deliver/dotlens-nh23",
   "current_phase": null,
   "step": "SELECT",
   "review_spec": "bugs",
-  "started_at": "2026-11-19T15:52:32.601Z",
-  "updated_at": "2026-11-19T17:08:58.022Z",
-  "note": "Complete 2026-11-19: dotlens-lv16 (bounded cognitive recursion search) delivered on deliver/dotlens-lv16 (commits e1450a3 harness warm-up, 69de145 search), branched from deliver/dotlens-r1yu at a0e186f. No open questions filed.",
-  "exit": "complete"
+  "note": "Complete 2026-11-20: v1.1.1 bugs delivered on deliver/dotlens-nh23 (a7a26bd aogb+hmk5 Deconstruct callers/kinds, f3edd8f xs35 active-solution race). dotlens-dcyg left in-progress awaiting the operator's decision. Open questions filed as dotlens-ln2o. Follow-ups outside the milestone: dotlens-l4ju, dotlens-56s0.",
+  "exit": "complete",
+  "started_at": "2026-11-20T13:18:08.647Z",
+  "updated_at": "2026-11-20T14:30:18.497Z"
 }

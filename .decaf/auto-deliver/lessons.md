@@ -131,3 +131,11 @@
 ## dotlens-lv16 — bounded recursion search (2026-11-19)
 - A differential check against the code being replaced (old vs new answers for every declaration, in several query orders, over three real solutions) gave a behavior-preserving rewrite one approving review with no correctness findings; brief it whenever a change claims "same results".
 - A timing harness needs its warm-up to run the whole measured sequence, sync path included: tiered JIT made whichever cell ran first look 600 ms slower, which read as a failed acceptance criterion. Check a surprising timing by swapping the cell order before blaming the code.
+
+## Deconstruct reference search — aogb, hmk5 (2026-11-20)
+- Roslyn's `ReferenceLocation.IsImplicit` is the oracle for "the compiler inserted this call"; it replaced a syntax guess and fixed seven implicit-call families at once. Roslyn also reports references inside SuppressMessage target strings and crefs, so any rule keyed on the referenced symbol's kind needs an in-code guard.
+- Folding the survey's "same fault, different mechanism" cases (operators, constructor initializers) cost one scoped re-review that found one Medium (string-literal references); one approving first review, about 40 minutes for the group.
+
+## dotlens-xs35 — active solution race (2026-11-20)
+- An acceptance rule that names only the race it fixes ("the auto-load stays inactive after an explicit request") left the unload path order-dependent; two review rounds each found one more interleaving. For activation/ownership races, brief the implementer to make every outcome independent of completion order and to check each pre-existing fallback (unload, reload) against that, not just the listed interleavings.
+- A fake loader the test completes by hand made 29 interleaving tests deterministic and fast; three reruns each stayed 29/29.
