@@ -94,16 +94,14 @@ public static class Program
                var multiWorkerManager = host.Services.GetRequiredService<MultiWorkerManager>();
                Log.Information("Auto-loading solution in background: {Path}", load.SolutionPath);
 
-               // Fire-and-forget: LoadSolutionAsync now handles both worker spawn
-               // and worker_load_solution internally. If load_solution is called by
-               // the agent while this is in progress, it will coalesce onto the same task.
+               // Fire-and-forget: a load_solution call for the same path joins this load.
                // The core load has its own finite timeout (MaxLoadTimeoutSeconds).
                _ = Task.Run(async () =>
                {
                   try
                   {
-                     await multiWorkerManager.LoadSolutionAsync(load.SolutionPath);
-                     Log.Information("Solution auto-loaded successfully");
+                     var result = await multiWorkerManager.AutoLoadSolutionAsync(load.SolutionPath);
+                     Log.Information("Solution auto-loaded successfully, active: {Active}", result.IsActive);
                   }
                   catch (TimeoutException ex)
                   {

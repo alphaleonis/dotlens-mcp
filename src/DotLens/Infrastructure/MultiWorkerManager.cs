@@ -46,17 +46,48 @@ public class MultiWorkerManager : IMultiWorkerManager
    private readonly ILogger<MultiWorkerManager> _logger;
    private readonly DotLensOptions _options;
    private readonly Dictionary<string, WorkerInstance> _workers = new(StringComparer.OrdinalIgnoreCase);
-   private readonly Dictionary<string, Task<WorkerInstance>> _loadingTasks = new(StringComparer.OrdinalIgnoreCase);
+   private readonly Dictionary<string, PendingLoad> _loadingTasks = new(StringComparer.OrdinalIgnoreCase);
    private readonly HashSet<string> _cancelledPaths = new(StringComparer.OrdinalIgnoreCase);
    private readonly Dictionary<string, string> _failedLoads = new(StringComparer.OrdinalIgnoreCase);
    private readonly CancellationTokenSource _shutdownCts = new();
    private readonly object _lock = new();
+   private readonly Func<string, CancellationToken, Task<WorkerInstance>> _loadWorker;
    private string? _activeSolutionPath;
+
+   /// <summary>
+   /// For each loaded solution, the number of the latest request that named it. See <see cref="TryActivate"/>.
+   /// </summary>
+   private readonly Dictionary<string, long> _solutionRequests = new(StringComparer.OrdinalIgnoreCase);
+
+   /// <summary>
+   /// The number of the latest explicit request.
+   /// </summary>
+   private long _lastRequest = AutoLoadRequest;
+
+   /// <summary>
+   /// The request number of the auto-load, below the number of every explicit request: load_solution, reload_solution and
+   /// set_active_solution.
+   /// </summary>
+   private const long AutoLoadRequest = 0;
 
    public MultiWorkerManager(ILogger<MultiWorkerManager> logger, IOptions<DotLensOptions> options)
    {
       _logger = logger;
       _options = options.Value;
+      _loadWorker = LoadWorkerAsync;
+   }
+
+   /// <summary>
+   /// Creates a manager whose loads start a worker with <paramref name="loadWorker"/>, so tests control when loads finish.
+   /// </summary>
+   internal MultiWorkerManager(
+      ILogger<MultiWorkerManager> logger,
+      IOptions<DotLensOptions> options,
+      Func<string, CancellationToken, Task<WorkerInstance>> loadWorker)
+   {
+      _logger = logger;
+      _options = options.Value;
+      _loadWorker = loadWorker;
    }
 
    /// <summary>
@@ -187,31 +218,45 @@ public class MultiWorkerManager : IMultiWorkerManager
 
    /// <summary>
    /// Loads a solution, spawning a new worker process if needed.
-   /// Sets the solution as active.
+   /// Makes the solution active, unless the active solution was named by a later request.
    /// If a load is already in progress for the same path, joins the existing task
    /// (load coalescing). The caller's cancellation token controls how long to wait,
    /// but does not cancel the underlying load.
    /// </summary>
-   public async Task<LoadSolutionResult> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default)
+   public Task<LoadSolutionResult> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default) =>
+      LoadAsync(solutionPath, explicitRequest: true, cancellationToken);
+
+   /// <summary>
+   /// Loads the solution that the server found at startup, as <see cref="LoadSolutionAsync"/> does.
+   /// </summary>
+   /// <remarks>
+   /// The solution becomes active only while no solution is active. See <see cref="TryActivate"/>.
+   /// </remarks>
+   public Task<LoadSolutionResult> AutoLoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default) =>
+      LoadAsync(solutionPath, explicitRequest: false, cancellationToken);
+
+   private async Task<LoadSolutionResult> LoadAsync(string solutionPath, bool explicitRequest, CancellationToken cancellationToken)
    {
       var normalized = NormalizePath(solutionPath);
-      Task<WorkerInstance> loadTask;
+      Task<LoadSolutionResult> loadTask;
 
       lock (_lock)
       {
+         var request = explicitRequest ? ++_lastRequest : AutoLoadRequest;
+
          // Already loaded? Return immediately.
          if (_workers.TryGetValue(normalized, out var existing))
          {
-            _activeSolutionPath = normalized;
-            _logger.LogInformation("Solution already loaded, switching active: {Path}", normalized);
-            return new LoadSolutionResult(existing, WasAlreadyLoaded: true);
+            var activated = TryActivate(normalized, request);
+            _logger.LogInformation("Solution already loaded: {Path}, active: {Active}", normalized, activated);
+            return new LoadSolutionResult(existing, WasAlreadyLoaded: true, _activeSolutionPath);
          }
 
          // Load in progress? Join the existing task.
-         if (_loadingTasks.TryGetValue(normalized, out var existingTask))
+         if (_loadingTasks.TryGetValue(normalized, out var pending))
          {
             _logger.LogInformation("Joining existing load for: {Path}", normalized);
-            loadTask = existingTask;
+            pending.Request = Math.Max(pending.Request, request);
          }
          else
          {
@@ -220,31 +265,67 @@ public class MultiWorkerManager : IMultiWorkerManager
             // so a caller timing out does not cancel the underlying load.
             _logger.LogInformation("Starting new load for: {Path}", normalized);
             _failedLoads.Remove(normalized);
-            loadTask = LoadSolutionCoreAsync(normalized);
-            _loadingTasks[normalized] = loadTask;
+            pending = new PendingLoad(request, load => LoadSolutionCoreAsync(normalized, load));
+            _loadingTasks[normalized] = pending;
          }
+         loadTask = pending.Task;
       }
 
       // Wait for the load with the caller's cancellation token.
       // If the caller times out, the underlying load continues in the background.
-      var instance = await loadTask.WaitAsync(cancellationToken);
-
-      lock (_lock)
-      {
-         _activeSolutionPath = normalized;
-      }
-
-      return new LoadSolutionResult(instance, WasAlreadyLoaded: false);
+      return await loadTask.WaitAsync(cancellationToken);
    }
 
    /// <summary>
-   /// Core load: spawns worker process, calls worker_load_solution, stores result.
+   /// Notes that a request named the loaded solution, and makes the solution active unless the active solution was named by a
+   /// later request. Call it under <see cref="_lock"/>.
+   /// </summary>
+   /// <remarks>
+   /// Explicit requests take increasing numbers when they start, so the latest request wins, not the load that finishes last.
+   /// The auto-load has <see cref="AutoLoadRequest"/>, so it wins only while no solution is active. A request whose load fails
+   /// never calls this, so the active solution stays as it was. When the active solution is unloaded,
+   /// <see cref="LatestNamedSolution"/> picks the replacement by the same numbers, so the outcome does not depend on whether a
+   /// load finishes before or after the unload.
+   /// </remarks>
+   /// <returns>Whether the solution became active.</returns>
+   private bool TryActivate(string normalizedPath, long request)
+   {
+      _solutionRequests[normalizedPath] = Math.Max(_solutionRequests.GetValueOrDefault(normalizedPath, AutoLoadRequest), request);
+
+      if (_activeSolutionPath is { } activePath
+         && !string.Equals(activePath, normalizedPath, StringComparison.OrdinalIgnoreCase)
+         && _solutionRequests[activePath] >= request)
+      {
+         return false;
+      }
+
+      _activeSolutionPath = normalizedPath;
+      return true;
+   }
+
+   /// <summary>
+   /// Returns the loaded solution that the latest request named, with ties broken by ordinal path. Call it under
+   /// <see cref="_lock"/>.
+   /// </summary>
+   /// <returns>The solution's path, or null when no solution is loaded.</returns>
+   private string? LatestNamedSolution() =>
+      _solutionRequests
+         .OrderByDescending(solution => solution.Value)
+         .ThenBy(solution => solution.Key, StringComparer.Ordinal)
+         .Select(solution => solution.Key)
+         .FirstOrDefault();
+
+   /// <summary>
+   /// Core load: starts the worker, stores it, and makes it active for the latest request that waits on it.
    /// This task is shared across all callers loading the same path (coalescing).
    /// Uses a finite timeout (MaxLoadTimeoutSeconds) to prevent indefinite hangs,
    /// but does not accept a caller-specific token to avoid canceling a shared operation.
    /// </summary>
-   private async Task<WorkerInstance> LoadSolutionCoreAsync(string normalizedPath)
+   private async Task<LoadSolutionResult> LoadSolutionCoreAsync(string normalizedPath, PendingLoad pending)
    {
+      // Run the rest outside the caller's lock, so the caller registers this load in _loadingTasks before it can finish.
+      await Task.Yield();
+
       // Use a finite timeout to prevent indefinite hangs if the worker process
       // or MSBuild host gets stuck. Without this, a hung worker leaks forever.
       // Linked to _shutdownCts so server disposal cancels in-flight loads promptly.
@@ -255,65 +336,20 @@ public class MultiWorkerManager : IMultiWorkerManager
       try
       {
          _logger.LogInformation("Loading new solution: {Path}", normalizedPath);
-         var instance = await SpawnWorkerAsync(normalizedPath, loadTimeoutToken);
-
-         // Call worker_load_solution to open the MSBuildWorkspace
-         try
-         {
-            var result = await instance.Client.CallToolAsync(
-                "worker_load_solution",
-                new Dictionary<string, object?> { ["solutionPath"] = normalizedPath },
-                cancellationToken: loadTimeoutToken);
-
-            // The MCP SDK does NOT throw on tool execution errors — it returns
-            // CallToolResult with IsError = true. We must check this explicitly.
-            if (result.IsError == true)
-            {
-               var errorText = result.Content
-                   .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
-                   .FirstOrDefault()?.Text ?? "Unknown error";
-               if (ParseWorkerError(errorText) is { } workerError)
-                  throw workerError;
-               throw new InvalidOperationException($"worker_load_solution failed: {errorText}");
-            }
-
-            // Extract project/document counts from the worker response
-            var textContent = result.Content
-                .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
-                .FirstOrDefault();
-
-            if (textContent != null)
-            {
-               using var doc = JsonDocument.Parse(textContent.Text);
-               if (doc.RootElement.TryGetProperty("data", out var dataElement))
-               {
-                  if (dataElement.TryGetProperty("projectCount", out var pc))
-                     instance.ProjectCount = pc.GetInt32();
-                  if (dataElement.TryGetProperty("documentCount", out var dc))
-                     instance.DocumentCount = dc.GetInt32();
-                  if (dataElement.TryGetProperty("warnings", out var warnings)
-                     && warnings.ValueKind == JsonValueKind.Array)
-                  {
-                     instance.LoadWarnings = [.. warnings.EnumerateArray().Select(w => w.GetString()).OfType<string>()];
-                  }
-               }
-            }
-         }
-         catch (Exception ex)
-         {
-            _logger.LogError(ex, "worker_load_solution failed for {Path}, disposing spawned worker", normalizedPath);
-            await instance.DisposeAsync();
-            throw;
-         }
+         var instance = await _loadWorker(normalizedPath, loadTimeoutToken);
 
          // Check if this path was unloaded while we were loading
          bool cancelled;
+         var activated = false;
+         string? activePath = null;
          lock (_lock)
          {
             cancelled = _cancelledPaths.Remove(normalizedPath);
             if (!cancelled)
             {
                _workers[normalizedPath] = instance;
+               activated = TryActivate(normalizedPath, pending.Request);
+               activePath = _activeSolutionPath;
             }
          }
 
@@ -324,8 +360,8 @@ public class MultiWorkerManager : IMultiWorkerManager
             throw new OperationCanceledException($"Solution was unloaded during loading: {normalizedPath}");
          }
 
-         _logger.LogInformation("Solution loaded successfully: {Path}", normalizedPath);
-         return instance;
+         _logger.LogInformation("Solution loaded successfully: {Path}, active: {Active}", normalizedPath, activated);
+         return new LoadSolutionResult(instance, WasAlreadyLoaded: false, activePath);
       }
       catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
       {
@@ -369,13 +405,72 @@ public class MultiWorkerManager : IMultiWorkerManager
    }
 
    /// <summary>
+   /// Spawns a worker process and calls worker_load_solution on it, reading the counts and warnings it returns.
+   /// </summary>
+   private async Task<WorkerInstance> LoadWorkerAsync(string normalizedPath, CancellationToken cancellationToken)
+   {
+      var instance = await SpawnWorkerAsync(normalizedPath, cancellationToken);
+
+      try
+      {
+         var result = await instance.Client.CallToolAsync(
+             "worker_load_solution",
+             new Dictionary<string, object?> { ["solutionPath"] = normalizedPath },
+             cancellationToken: cancellationToken);
+
+         // The MCP SDK does NOT throw on tool execution errors — it returns
+         // CallToolResult with IsError = true. We must check this explicitly.
+         if (result.IsError == true)
+         {
+            var errorText = result.Content
+                .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
+                .FirstOrDefault()?.Text ?? "Unknown error";
+            if (ParseWorkerError(errorText) is { } workerError)
+               throw workerError;
+            throw new InvalidOperationException($"worker_load_solution failed: {errorText}");
+         }
+
+         // Extract project/document counts from the worker response
+         var textContent = result.Content
+             .OfType<ModelContextProtocol.Protocol.TextContentBlock>()
+             .FirstOrDefault();
+
+         if (textContent != null)
+         {
+            using var doc = JsonDocument.Parse(textContent.Text);
+            if (doc.RootElement.TryGetProperty("data", out var dataElement))
+            {
+               if (dataElement.TryGetProperty("projectCount", out var pc))
+                  instance.ProjectCount = pc.GetInt32();
+               if (dataElement.TryGetProperty("documentCount", out var dc))
+                  instance.DocumentCount = dc.GetInt32();
+               if (dataElement.TryGetProperty("warnings", out var warnings)
+                  && warnings.ValueKind == JsonValueKind.Array)
+               {
+                  instance.LoadWarnings = [.. warnings.EnumerateArray().Select(w => w.GetString()).OfType<string>()];
+               }
+            }
+         }
+      }
+      catch (Exception ex)
+      {
+         _logger.LogError(ex, "worker_load_solution failed for {Path}, disposing spawned worker", normalizedPath);
+         await instance.DisposeAsync();
+         throw;
+      }
+
+      return instance;
+   }
+
+   /// <summary>
    /// Unloads a solution and terminates its worker process.
    /// If no path specified, unloads the active solution.
+   /// The loaded solution that the latest request named replaces an unloaded active solution.
    /// </summary>
    public async Task UnloadSolutionAsync(string? solutionPath = null, CancellationToken cancellationToken = default)
    {
       WorkerInstance? workerToDispose = null;
-      Task<WorkerInstance>? loadingTask = null;
+      Task<LoadSolutionResult>? loadingTask = null;
       string? pathToUnload;
 
       lock (_lock)
@@ -391,20 +486,18 @@ public class MultiWorkerManager : IMultiWorkerManager
          if (_workers.TryGetValue(pathToUnload, out workerToDispose))
          {
             _workers.Remove(pathToUnload);
+            _solutionRequests.Remove(pathToUnload);
 
-            // Update active solution if we just unloaded it
-            if (_activeSolutionPath == pathToUnload)
-            {
-               // Switch to another loaded solution, or null if none remain
-               _activeSolutionPath = _workers.Keys.FirstOrDefault();
-            }
+            if (string.Equals(_activeSolutionPath, pathToUnload, StringComparison.OrdinalIgnoreCase))
+               _activeSolutionPath = LatestNamedSolution();
          }
 
          // If a load is in progress for this path, mark it as cancelled.
          // LoadSolutionCoreAsync will check _cancelledPaths and dispose instead of storing.
-         if (_loadingTasks.TryGetValue(pathToUnload, out loadingTask))
+         if (_loadingTasks.TryGetValue(pathToUnload, out var pending))
          {
             _cancelledPaths.Add(pathToUnload);
+            loadingTask = pending.Task;
          }
       }
 
@@ -433,18 +526,19 @@ public class MultiWorkerManager : IMultiWorkerManager
    public async Task UnloadAllAsync()
    {
       List<WorkerInstance> workersToDispose;
-      List<Task<WorkerInstance>> loadingTasksToAwait;
+      List<Task<LoadSolutionResult>> loadingTasksToAwait;
 
       lock (_lock)
       {
          workersToDispose = _workers.Values.ToList();
          _workers.Clear();
+         _solutionRequests.Clear();
          _activeSolutionPath = null;
 
          // Cancel all in-progress loads so they don't resurrect workers after clear
          foreach (var path in _loadingTasks.Keys)
             _cancelledPaths.Add(path);
-         loadingTasksToAwait = _loadingTasks.Values.ToList();
+         loadingTasksToAwait = _loadingTasks.Values.Select(pending => pending.Task).ToList();
       }
 
       _logger.LogInformation("Shutting down {Count} workers, cancelling {LoadingCount} in-progress loads",
@@ -477,6 +571,7 @@ public class MultiWorkerManager : IMultiWorkerManager
 
    /// <summary>
    /// Sets the active solution. The solution must already be loaded.
+   /// A load that an earlier request started does not replace it when that load finishes.
    /// </summary>
    public void SetActiveSolution(string solutionPath)
    {
@@ -497,7 +592,7 @@ public class MultiWorkerManager : IMultiWorkerManager
             throw new InvalidOperationException(
                 $"Solution not loaded: {solutionPath}. Load it first with load_solution.");
          }
-         _activeSolutionPath = normalized;
+         TryActivate(normalized, ++_lastRequest);
       }
 
       _logger.LogInformation("Active solution switched to: {Path}", normalized);
@@ -686,6 +781,25 @@ public class MultiWorkerManager : IMultiWorkerManager
    {
       // Normalize to full path with consistent casing for dictionary lookups
       return Path.GetFullPath(path);
+   }
+
+   /// <summary>
+   /// A load in progress and the request that it makes active when it finishes.
+   /// </summary>
+   private sealed class PendingLoad
+   {
+      public PendingLoad(long request, Func<PendingLoad, Task<LoadSolutionResult>> start)
+      {
+         Request = request;
+         Task = start(this);
+      }
+
+      public Task<LoadSolutionResult> Task { get; }
+
+      /// <summary>
+      /// The highest number of the requests that wait on this load. See <see cref="TryActivate"/>.
+      /// </summary>
+      public long Request { get; set; }
    }
 
    public async ValueTask DisposeAsync()

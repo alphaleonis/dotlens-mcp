@@ -25,6 +25,9 @@ public record LoadSolutionResponse
    [Description("Number of solutions currently loaded.")]
    public required int TotalSolutions { get; init; }
 
+   [Description("Whether this solution is the active one that tool calls target. Null while the load is in progress.")]
+   public bool? IsActive { get; init; }
+
    [Description("When this solution was loaded (UTC).")]
    public DateTime? LoadedAt { get; init; }
 
@@ -47,6 +50,8 @@ public record LoadSolutionResponse
 [DotLensServerTool]
 public class LoadSolutionTool
 {
+   private const string NotActiveHint = "Call set_active_solution with this path to make it active.";
+
    private readonly IMultiWorkerManager _workerManager;
    private readonly IOptions<DotLensOptions> _options;
    private readonly ILogger<LoadSolutionTool> _logger;
@@ -59,7 +64,7 @@ public class LoadSolutionTool
    }
 
    [McpServerTool(Name = "load_solution", Destructive = true, Idempotent = true, OpenWorld = false)]
-   [Description("Load a .NET solution for analysis. Must be called before any other tools. The loaded solution becomes active.")]
+   [Description("Load a .NET solution for analysis. Must be called before any other tools. The loaded solution becomes active, unless the active solution was named by a later load_solution or set_active_solution call.")]
    public async Task<ToolResult<LoadSolutionResponse>> LoadSolutionAsync(
        [Description("Absolute path to .sln or .slnx file")] string solutionPath,
        [Description("Optional timeout in seconds. Overrides default config.")]
@@ -98,13 +103,15 @@ public class LoadSolutionTool
                new LoadSolutionResponse
                {
                   Status = "already_loaded",
-                  Message = "Solution already loaded, switched to active",
+                  Message = result.IsActive ? "Solution already loaded, switched to active" : NotActiveMessage("Solution already loaded", result),
                   SolutionPath = solutionPath,
+                  IsActive = result.IsActive,
                   LoadedAt = result.Instance.LoadedAt,
                   TotalSolutions = _workerManager.WorkerCount,
                   ProjectCount = result.Instance.ProjectCount,
                   DocumentCount = result.Instance.DocumentCount,
-                  Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null
+                  Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null,
+                  Hint = result.IsActive ? null : NotActiveHint
                });
          }
 
@@ -116,12 +123,15 @@ public class LoadSolutionTool
             new LoadSolutionResponse
             {
                Status = "loaded",
+               Message = result.IsActive ? null : NotActiveMessage("Solution loaded", result),
                SolutionPath = solutionPath,
+               IsActive = result.IsActive,
                TotalSolutions = _workerManager.WorkerCount,
                LoadedAt = result.Instance.LoadedAt,
                ProjectCount = result.Instance.ProjectCount,
                DocumentCount = result.Instance.DocumentCount,
-               Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null
+               Warnings = result.Instance.LoadWarnings.Count > 0 ? result.Instance.LoadWarnings : null,
+               Hint = result.IsActive ? null : NotActiveHint
             });
       }
       catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -178,4 +188,9 @@ public class LoadSolutionTool
              "Check if the solution file is valid and all project references exist");
       }
    }
+
+   private static string NotActiveMessage(string loaded, LoadSolutionResult result) =>
+      result.ActiveSolutionPath is { } activePath
+         ? $"{loaded}, but another solution is active: {activePath}."
+         : $"{loaded}, but no solution is active.";
 }

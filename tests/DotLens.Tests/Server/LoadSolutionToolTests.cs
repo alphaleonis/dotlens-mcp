@@ -47,7 +47,7 @@ public class LoadSolutionToolTests
             DocumentCount = 10
          };
          A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
-            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: true));
+            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: true, ActiveSolutionPath: solutionPath));
          A.CallTo(() => workerManager.WorkerCount).Returns(1);
 
          var tool = new LoadSolutionTool(workerManager, DefaultOptions(), NullLogger<LoadSolutionTool>.Instance);
@@ -56,6 +56,9 @@ public class LoadSolutionToolTests
 
          Assert.NotNull(result.Data);
          Assert.Equal("already_loaded", result.Data.Status);
+         Assert.True(result.Data.IsActive);
+         Assert.Equal("Solution already loaded, switched to active", result.Data.Message);
+         Assert.Null(result.Data.Hint);
          Assert.Equal(solutionPath, result.Data.SolutionPath);
          Assert.Equal(1, result.Data.TotalSolutions);
          Assert.Equal(3, result.Data.ProjectCount);
@@ -85,7 +88,7 @@ public class LoadSolutionToolTests
             DocumentCount = 10
          };
          A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
-            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: false));
+            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: false, ActiveSolutionPath: solutionPath));
          A.CallTo(() => workerManager.WorkerCount).Returns(1);
 
          var tool = new LoadSolutionTool(workerManager, DefaultOptions(), NullLogger<LoadSolutionTool>.Instance);
@@ -98,6 +101,50 @@ public class LoadSolutionToolTests
          Assert.Equal(1, result.Data.TotalSolutions);
          Assert.Equal(3, result.Data.ProjectCount);
          Assert.Equal(10, result.Data.DocumentCount);
+         Assert.True(result.Data.IsActive);
+         Assert.Null(result.Data.Message);
+         Assert.Null(result.Data.Hint);
+      }
+      finally
+      {
+         File.Delete(solutionPath);
+      }
+   }
+
+   [Theory]
+   [InlineData(false, true, "Solution loaded, but another solution is active: {0}.")]
+   [InlineData(false, false, "Solution loaded, but no solution is active.")]
+   [InlineData(true, true, "Solution already loaded, but another solution is active: {0}.")]
+   [InlineData(true, false, "Solution already loaded, but no solution is active.")]
+   public async Task LoadSolution_SolutionNotActive_ReportsWhatIsActive(
+      bool wasAlreadyLoaded, bool otherSolutionActive, string expectedMessage)
+   {
+      var workerManager = A.Fake<IMultiWorkerManager>();
+      var solutionPath = Path.GetTempFileName() + ".sln";
+      var otherPath = solutionPath + ".other.sln";
+      File.WriteAllText(solutionPath, "");
+
+      try
+      {
+         var instance = new WorkerInstance
+         {
+            SolutionPath = solutionPath,
+            Client = A.Fake<ModelContextProtocol.Client.McpClient>(),
+            LoadedAt = DateTime.UtcNow,
+         };
+         A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
+            .Returns(new LoadSolutionResult(instance, wasAlreadyLoaded, otherSolutionActive ? otherPath : null));
+         A.CallTo(() => workerManager.WorkerCount).Returns(2);
+         var tool = new LoadSolutionTool(workerManager, DefaultOptions(), NullLogger<LoadSolutionTool>.Instance);
+
+         var result = await tool.LoadSolutionAsync(solutionPath, cancellationToken: CT);
+
+         Assert.NotNull(result.Data);
+         Assert.Equal(wasAlreadyLoaded ? "already_loaded" : "loaded", result.Data.Status);
+         Assert.False(result.Data.IsActive);
+         Assert.Equal(string.Format(expectedMessage, otherPath), result.Data.Message);
+         Assert.Equal("Call set_active_solution with this path to make it active.", result.Data.Hint);
+         Assert.Equal(2, result.Data.TotalSolutions);
       }
       finally
       {
@@ -127,7 +174,7 @@ public class LoadSolutionToolTests
             LoadWarnings = hasWarning ? [warning] : [],
          };
          A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
-            .Returns(new LoadSolutionResult(instance, wasAlreadyLoaded));
+            .Returns(new LoadSolutionResult(instance, wasAlreadyLoaded, ActiveSolutionPath: solutionPath));
          var tool = new LoadSolutionTool(workerManager, DefaultOptions(), NullLogger<LoadSolutionTool>.Instance);
 
          var result = await tool.LoadSolutionAsync(solutionPath, cancellationToken: CT);
@@ -229,7 +276,7 @@ public class LoadSolutionToolTests
          };
          A.CallTo(() => workerManager.IsLoading(solutionPath)).Returns(true);
          A.CallTo(() => workerManager.LoadSolutionAsync(solutionPath, A<CancellationToken>._))
-            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: false));
+            .Returns(new LoadSolutionResult(instance, WasAlreadyLoaded: false, ActiveSolutionPath: solutionPath));
          A.CallTo(() => workerManager.WorkerCount).Returns(1);
 
          var options = Options.Create(new DotLensOptions { LoadWaitTimeoutSeconds = 5 });

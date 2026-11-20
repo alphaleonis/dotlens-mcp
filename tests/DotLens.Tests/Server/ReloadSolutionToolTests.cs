@@ -42,7 +42,7 @@ public class ReloadSolutionToolTests
             LoadedAt = DateTime.UtcNow,
             ProjectCount = 5,
             DocumentCount = 20
-         }, WasAlreadyLoaded: false));
+         }, WasAlreadyLoaded: false, ActiveSolutionPath: solutionPath));
       A.CallTo(() => workerManager.WorkerCount).Returns(1);
 
       var tool = new ReloadSolutionTool(workerManager, NullLogger<ReloadSolutionTool>.Instance);
@@ -84,7 +84,7 @@ public class ReloadSolutionToolTests
             LoadedAt = DateTime.UtcNow,
             ProjectCount = 3,
             DocumentCount = 15
-         }, WasAlreadyLoaded: false));
+         }, WasAlreadyLoaded: false, ActiveSolutionPath: solutionPath));
       A.CallTo(() => workerManager.WorkerCount).Returns(1);
 
       var tool = new ReloadSolutionTool(workerManager, NullLogger<ReloadSolutionTool>.Instance);

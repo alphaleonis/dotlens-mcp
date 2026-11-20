@@ -3,7 +3,16 @@ namespace DotLens.Infrastructure;
 /// <summary>
 /// Result of loading a solution, including whether it was already loaded.
 /// </summary>
-public record LoadSolutionResult(WorkerInstance Instance, bool WasAlreadyLoaded);
+/// <param name="Instance">The worker that holds the solution.</param>
+/// <param name="WasAlreadyLoaded">Whether a worker held the solution before the request.</param>
+/// <param name="ActiveSolutionPath">The path of the active solution when the load finished, or null when none was active.</param>
+public record LoadSolutionResult(WorkerInstance Instance, bool WasAlreadyLoaded, string? ActiveSolutionPath)
+{
+   /// <summary>
+   /// Whether the loaded solution was the active one when the load finished.
+   /// </summary>
+   public bool IsActive => string.Equals(ActiveSolutionPath, Instance.SolutionPath, StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>
 /// Interface for managing multiple worker processes, one per loaded solution.
@@ -32,13 +41,14 @@ public interface IMultiWorkerManager : IAsyncDisposable
 
    /// <summary>
    /// Loads a solution, spawning a new worker process if needed.
-   /// Sets the solution as active. Returns the instance and whether it was already loaded.
+   /// Makes the solution active, unless the active solution was named by a later request.
    /// </summary>
    Task<LoadSolutionResult> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken = default);
 
    /// <summary>
    /// Unloads a solution and terminates its worker process.
    /// If no path specified, unloads the active solution.
+   /// The loaded solution that the latest request named replaces an unloaded active solution.
    /// </summary>
    Task UnloadSolutionAsync(string? solutionPath = null, CancellationToken cancellationToken = default);
 
@@ -49,6 +59,7 @@ public interface IMultiWorkerManager : IAsyncDisposable
 
    /// <summary>
    /// Sets the active solution. The solution must already be loaded.
+   /// A load that an earlier request started does not replace it when that load finishes.
    /// </summary>
    void SetActiveSolution(string solutionPath);
 
