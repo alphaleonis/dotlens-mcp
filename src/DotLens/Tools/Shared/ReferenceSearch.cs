@@ -10,7 +10,9 @@ namespace DotLens.Tools.Shared;
 /// <param name="Definition">The searched symbol, or a symbol that find-references cascades to.</param>
 /// <param name="Document">The document that holds the reference.</param>
 /// <param name="Location">The reference's location in <paramref name="Document"/>.</param>
-internal sealed record SourceReference(ISymbol Definition, Document Document, Location Location);
+/// <param name="IsImplicit">Whether the code at the location uses the symbol without naming it, as a foreach calls
+/// GetEnumerator.</param>
+internal sealed record SourceReference(ISymbol Definition, Document Document, Location Location, bool IsImplicit);
 
 /// <summary>
 /// The code that refers to a symbol from inside one method, property, field or event.
@@ -22,8 +24,8 @@ internal sealed record SymbolCallers(ISymbol? CallingSymbol, List<Location> Loca
 
 /// <summary>
 /// Finds references and callers with <see cref="SymbolFinder"/>, with its indexer references in null-conditional
-/// accesses replaced by a scan of the element bindings. Find-references also adds the Deconstruct calls of positional
-/// patterns, see <see cref="FindPositionalPatternReferencesAsync"/>.
+/// accesses replaced by a scan of the element bindings. Both searches also add the Deconstruct calls of positional
+/// patterns, see <see cref="FindPositionalPatternsAsync"/>.
 /// </summary>
 /// <remarks>
 /// <see cref="SymbolFinder"/> reports a use in a file that several projects compile once for each project and each
@@ -61,12 +63,12 @@ internal static class ReferenceSearch
             if (!location.Location.IsInSource || (indexer is not null && await IsAtBindingAsync(location.Location, cancellationToken)))
                continue;
 
-            references.Add(new SourceReference(referenced.Definition, location.Document, location.Location));
+            references.Add(new SourceReference(referenced.Definition, location.Document, location.Location, location.IsImplicit));
          }
       }
 
-      if (symbol is IMethodSymbol { Name: WellKnownMemberNames.DeconstructMethodName } deconstruct)
-         references.AddRange(await FindPositionalPatternReferencesAsync(solution, deconstruct, cancellationToken));
+      if (symbol is IMethodSymbol { Name: WellKnownMemberNames.DeconstructMethodName })
+         references.AddRange(await FindPositionalPatternReferencesAsync(solution, referencedSymbols, cancellationToken));
 
       if (indexers.Count == 0)
          return DistinctReferences(references);
@@ -75,27 +77,56 @@ internal static class ReferenceSearch
       {
          var definition = indexers.FirstOrDefault(indexer => binding.Indexers.Any(bound => IsSameSymbol(bound, indexer)));
          if (definition is not null)
-            references.Add(new SourceReference(definition, binding.Document, binding.Location));
+            references.Add(new SourceReference(definition, binding.Document, binding.Location, IsImplicit: false));
       }
 
       return DistinctReferences(references);
    }
 
    /// <summary>
-   /// Returns the positional patterns whose Deconstruct call binds to <paramref name="deconstruct"/>, in the projects
-   /// whose code can refer to it.
+   /// Returns the positional patterns that call a Deconstruct method among the definitions that find-references reports,
+   /// each under the definition that it calls.
+   /// </summary>
+   /// <remarks>
+   /// The definitions hold the searched method and the members that find-references cascades to, so a pattern that calls
+   /// an override or an implementation of the method counts as it does for a deconstruction assignment.
+   /// </remarks>
+   private static async Task<List<SourceReference>> FindPositionalPatternReferencesAsync(
+      Solution solution, IEnumerable<ReferencedSymbol> referencedSymbols, CancellationToken cancellationToken)
+   {
+      var deconstructs = referencedSymbols
+         .Select(referenced => referenced.Definition)
+         .OfType<IMethodSymbol>()
+         .Where(method => method.Name == WellKnownMemberNames.DeconstructMethodName)
+         .ToList();
+      var references = new List<SourceReference>();
+      foreach (var pattern in await FindPositionalPatternsAsync(solution, deconstructs, cancellationToken))
+      {
+         var called = GetImplementation(pattern.Method);
+         if (deconstructs.FirstOrDefault(deconstruct => IsSameSymbol(GetImplementation(deconstruct), called)) is { } definition)
+            references.Add(new SourceReference(definition, pattern.Document, pattern.Location, IsImplicit: true));
+      }
+
+      return references;
+   }
+
+   private sealed record PositionalPattern(
+      Document Document, SemanticModel Model, SyntaxNode Syntax, Location Location, IMethodSymbol Method);
+
+   /// <summary>
+   /// Returns each positional pattern that calls a Deconstruct method, with that method, in the projects whose code can
+   /// refer to <paramref name="definitions"/>.
    /// </summary>
    /// <remarks>
    /// <see cref="SymbolFinder"/> finds the Deconstruct calls of deconstruction assignments and of foreach, but not those of
-   /// positional patterns, as DeconstructionReferenceTests shows. A reference is at the parentheses that deconstruct:
-   /// the positional clause of a recursive pattern, or a parenthesized designation of a var pattern.
+   /// positional patterns, as DeconstructionReferenceTests shows. A pattern's location is at the parentheses that
+   /// deconstruct: the positional clause of a recursive pattern, or a parenthesized designation of a var pattern.
    /// </remarks>
-   private static async Task<List<SourceReference>> FindPositionalPatternReferencesAsync(
-      Solution solution, IMethodSymbol deconstruct, CancellationToken cancellationToken)
+   private static async Task<List<PositionalPattern>> FindPositionalPatternsAsync(
+      Solution solution, IEnumerable<ISymbol> definitions, CancellationToken cancellationToken)
    {
-      var target = deconstruct.ReducedFrom ?? deconstruct;
-      var scope = GetSearchScope(solution, [target], cancellationToken);
-      var references = new List<SourceReference>();
+      var scope = GetSearchScope(solution, definitions, cancellationToken);
+      var patterns = new List<PositionalPattern>();
       foreach (var project in solution.Projects.Where(project => project.SupportsCompilation && (scope is null || scope.Contains(project.Id))))
       {
          IEnumerable<Document> documents = [.. project.Documents, .. await project.GetSourceGeneratedDocumentsAsync(cancellationToken)];
@@ -104,26 +135,32 @@ internal static class ReferenceSearch
             if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root)
                continue;
 
-            var patterns = root.DescendantNodes()
+            var syntaxes = root.DescendantNodes()
                .Where(node => node is RecursivePatternSyntax { PositionalPatternClause: not null } || IsVarPatternDesignation(node))
                .ToList();
-            if (patterns.Count == 0 || await document.GetSemanticModelAsync(cancellationToken) is not { } model)
+            if (syntaxes.Count == 0 || await document.GetSemanticModelAsync(cancellationToken) is not { } model)
                continue;
 
-            foreach (var pattern in patterns)
+            foreach (var syntax in syntaxes)
             {
-               if (model.GetOperation(pattern, cancellationToken) is IRecursivePatternOperation { DeconstructSymbol: IMethodSymbol bound }
-                  && IsSameSymbol(bound.ReducedFrom ?? bound, target))
+               if (model.GetOperation(syntax, cancellationToken) is IRecursivePatternOperation { DeconstructSymbol: IMethodSymbol deconstruct })
                {
-                  var parentheses = pattern is RecursivePatternSyntax { PositionalPatternClause: { } clause } ? clause : pattern;
-                  references.Add(new SourceReference(deconstruct, document, parentheses.GetLocation()));
+                  var parentheses = syntax is RecursivePatternSyntax { PositionalPatternClause: { } clause } ? clause : syntax;
+                  patterns.Add(new PositionalPattern(document, model, syntax, parentheses.GetLocation(), deconstruct));
                }
             }
          }
       }
 
-      return references;
+      return patterns;
    }
+
+   /// <summary>
+   /// Returns the static method behind a reduced extension method or an extension block member, or the method itself,
+   /// so that each form of one method compares as the same symbol.
+   /// </summary>
+   private static IMethodSymbol GetImplementation(IMethodSymbol method) =>
+      method.ReducedFrom ?? method.AssociatedExtensionImplementation ?? method;
 
    /// <summary>
    /// Returns whether the node is a parenthesized designation of a var pattern, at any depth. Each such designation
@@ -202,19 +239,33 @@ internal static class ReferenceSearch
             callers.Add(callerInfo.CallingSymbol, locations);
       }
 
-      if (GetIndexer(symbol.OriginalDefinition) is not { } target)
-         return callers.ToSourceOrderedList();
-
       var baseMembers = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
-      var targetBases = await GetBaseMembersAsync(target, baseMembers, solution, cancellationToken);
-      foreach (var binding in await FindIndexerBindingsAsync(solution, [target, .. targetBases], cancellationToken))
+      if (GetIndexer(symbol.OriginalDefinition) is { } indexer)
       {
-         var bound = await FindCalledIndexerAsync(binding, target, baseMembers, solution, cancellationToken);
-         if (bound is null || (symbol is IMethodSymbol accessor && !UsesAccessor(binding.Syntax, bound, accessor)) || !sites.Add(binding.Location))
-            continue;
+         var indexerBases = await GetBaseMembersAsync(indexer, baseMembers, solution, cancellationToken);
+         foreach (var binding in await FindIndexerBindingsAsync(solution, [indexer, .. indexerBases], cancellationToken))
+         {
+            var bound = await FindCalledMemberAsync(binding.Indexers, indexer, baseMembers, solution, cancellationToken);
+            if (bound is null || (symbol is IMethodSymbol accessor && !UsesAccessor(binding.Syntax, bound, accessor)) || !sites.Add(binding.Location))
+               continue;
 
-         if (GetCallingSymbol(binding.Model, binding.Syntax.SpanStart, cancellationToken) is { } callingSymbol)
-            callers.Add(callingSymbol, [binding.Location]);
+            if (GetCallingSymbol(binding.Model, binding.Syntax.SpanStart, cancellationToken) is { } callingSymbol)
+               callers.Add(callingSymbol, [binding.Location]);
+         }
+      }
+      else if (symbol.OriginalDefinition is IMethodSymbol { Name: WellKnownMemberNames.DeconstructMethodName } deconstruct)
+      {
+         var target = GetImplementation(deconstruct);
+         var targetBases = await GetBaseMembersAsync(target, baseMembers, solution, cancellationToken);
+         foreach (var pattern in await FindPositionalPatternsAsync(solution, [target, .. targetBases], cancellationToken))
+         {
+            var bound = await FindCalledMemberAsync([GetImplementation(pattern.Method)], target, baseMembers, solution, cancellationToken);
+            if (bound is null || !sites.Add(pattern.Location))
+               continue;
+
+            if (GetCallingSymbol(pattern.Model, pattern.Syntax.SpanStart, cancellationToken) is { } callingSymbol)
+               callers.Add(callingSymbol, [pattern.Location]);
+         }
       }
 
       return callers.ToSourceOrderedList();
@@ -473,39 +524,41 @@ internal static class ReferenceSearch
    };
 
    /// <summary>
-   /// Returns the indexer of <paramref name="binding"/> that find-callers on <paramref name="target"/> follows: the
-   /// target itself, a member it overrides or implements, or a member that overrides or implements it.
+   /// Returns the first of <paramref name="candidates"/>, the members that a use binds to, that find-callers on
+   /// <paramref name="target"/> follows: the target itself, a member it overrides or implements, or a member that
+   /// overrides or implements it.
    /// </summary>
-   /// <returns>The indexer, or null when the binding refers to none of them.</returns>
-   private static async Task<IPropertySymbol?> FindCalledIndexerAsync(
-      IndexerBinding binding,
-      IPropertySymbol target,
+   /// <returns>The member, or null when the use refers to none of them.</returns>
+   private static async Task<T?> FindCalledMemberAsync<T>(
+      IEnumerable<T> candidates,
+      ISymbol target,
       Dictionary<ISymbol, List<ISymbol>> baseMembers,
       Solution solution,
       CancellationToken cancellationToken)
+      where T : class, ISymbol
    {
       var targetBases = await GetBaseMembersAsync(target, baseMembers, solution, cancellationToken);
-      foreach (var indexer in binding.Indexers)
+      foreach (var candidate in candidates)
       {
-         if (IsSameSymbol(indexer, target) || targetBases.Any(baseMember => IsSameSymbol(indexer, baseMember)))
-            return indexer;
+         if (IsSameSymbol(candidate, target) || targetBases.Any(baseMember => IsSameSymbol(candidate, baseMember)))
+            return candidate;
 
-         var indexerBases = await GetBaseMembersAsync(indexer, baseMembers, solution, cancellationToken);
-         if (indexerBases.Any(baseMember => IsSameSymbol(baseMember, target)))
-            return indexer;
+         var candidateBases = await GetBaseMembersAsync(candidate, baseMembers, solution, cancellationToken);
+         if (candidateBases.Any(baseMember => IsSameSymbol(baseMember, target)))
+            return candidate;
       }
 
       return null;
    }
 
    /// <summary>
-   /// Returns the members that <paramref name="property"/> overrides or implements, and theirs in turn, with each
+   /// Returns the members that <paramref name="member"/> overrides or implements, and theirs in turn, with each
    /// result kept in <paramref name="cache"/> by original definition.
    /// </summary>
    private static async Task<List<ISymbol>> GetBaseMembersAsync(
-      IPropertySymbol property, Dictionary<ISymbol, List<ISymbol>> cache, Solution solution, CancellationToken cancellationToken)
+      ISymbol member, Dictionary<ISymbol, List<ISymbol>> cache, Solution solution, CancellationToken cancellationToken)
    {
-      var key = property.OriginalDefinition;
+      var key = member.OriginalDefinition;
       if (cache.TryGetValue(key, out var cached))
          return cached;
 
@@ -514,7 +567,13 @@ internal static class ReferenceSearch
       while (pending.TryDequeue(out var current))
       {
          var direct = (await SymbolFinder.FindImplementedInterfaceMembersAsync(current, solution, cancellationToken: cancellationToken)).ToList();
-         if (current is IPropertySymbol { OverriddenProperty: { } overridden })
+         ISymbol? overridden = current switch
+         {
+            IPropertySymbol property => property.OverriddenProperty,
+            IMethodSymbol method => method.OverriddenMethod,
+            _ => null,
+         };
+         if (overridden is not null)
             direct.Add(overridden);
 
          foreach (var baseMember in direct.Where(baseMember => !bases.Any(known => IsSameSymbol(known, baseMember))))

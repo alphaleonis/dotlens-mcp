@@ -81,7 +81,7 @@ public class FindReferencesTool
             var refRoot = await refTree.GetRootAsync(cancellationToken);
             // ClassifyReferenceAsync widens from the reference's own node, not from a same-span wrapper such as an argument.
             var refNode = refRoot.FindNode(refSpan, getInnermostNodeForTie: true);
-            var kind = await ClassifyReferenceAsync(refNode, refDocument, cancellationToken);
+            var kind = await ClassifyReferenceAsync(loc, refNode, cancellationToken);
 
             string? lineText = null;
             if (verbosity == ToolResultVerbosity.Full)
@@ -134,10 +134,23 @@ public class FindReferencesTool
    }
 
    /// <summary>
-   /// Classifies a reference as Read, Write, or Call based on its syntax context.
+   /// Classifies a reference as Read, Write, or Call, from its syntax context unless it invokes a method whatever the
+   /// syntax at its location.
    /// </summary>
-   private static async Task<ReferenceKind> ClassifyReferenceAsync(SyntaxNode node, Document document, CancellationToken cancellationToken)
+   /// <remarks>
+   /// An implicit reference to a method is a call that the compiler inserts, such as the Deconstruct call of a
+   /// deconstruction. Code cannot name an operator, a conversion or a constructor except to call it, so a reference to
+   /// one in code is a call. A reference outside code, see <see cref="IsInCode"/>, keeps the kind of its syntax. Such
+   /// are a cref and a documentation ID in a SuppressMessage target.
+   /// </remarks>
+   private static async Task<ReferenceKind> ClassifyReferenceAsync(SourceReference reference, SyntaxNode node, CancellationToken cancellationToken)
    {
+      if (reference.Definition is IMethodSymbol method
+         && (reference.IsImplicit || method.MethodKind is MethodKind.Constructor or MethodKind.UserDefinedOperator or MethodKind.Conversion)
+         && IsInCode(node, reference.Location.SourceSpan.Start))
+         return ReferenceKind.Call;
+
+      var document = reference.Document;
       var parent = node.Parent;
 
       // === Call detection ===
@@ -151,11 +164,34 @@ public class FindReferencesTool
           && memberAccess1.Parent is InvocationExpressionSyntax)
          return ReferenceKind.Call;
 
+      // Conditional invocation: obj?.Method() — node is Name of MemberBinding, grandparent is Invocation
+      if (parent is MemberBindingExpressionSyntax memberBinding && memberBinding.Name == node
+          && memberBinding.Parent is InvocationExpressionSyntax conditionalInvocation && conditionalInvocation.Expression == memberBinding)
+         return ReferenceKind.Call;
+
       // Constructor: new Type() — walk up through QualifiedName/MemberAccess to find ObjectCreation
       if (IsWithinObjectCreationType(node))
          return ReferenceKind.Call;
 
       return await IsWrittenToAsync(GetAccessExpression(node), document, cancellationToken) ? ReferenceKind.Write : ReferenceKind.Read;
+   }
+
+   /// <summary>
+   /// Returns whether <paramref name="position"/> is in the code that <paramref name="node"/> spans, outside comments and
+   /// the text of string literals.
+   /// </summary>
+   internal static bool IsInCode(SyntaxNode node, int position)
+   {
+      var token = node.FindToken(position, findInsideTrivia: true);
+      return token.Span.Contains(position)
+         && token.Parent?.FirstAncestorOrSelf<DocumentationCommentTriviaSyntax>() is null
+         && token.Kind() is not (SyntaxKind.StringLiteralToken
+            or SyntaxKind.Utf8StringLiteralToken
+            or SyntaxKind.SingleLineRawStringLiteralToken
+            or SyntaxKind.MultiLineRawStringLiteralToken
+            or SyntaxKind.Utf8SingleLineRawStringLiteralToken
+            or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+            or SyntaxKind.InterpolatedStringTextToken);
    }
 
    /// <summary>
