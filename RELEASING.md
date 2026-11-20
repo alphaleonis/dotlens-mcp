@@ -4,7 +4,8 @@ Releases are automated via the [Release workflow](.github/workflows/release.yml)
 
 ## Prerequisites
 
-- `NUGET_API_KEY` repository secret configured with a valid NuGet.org API key
+- A [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) policy on NuGet.org for repository owner `alphaleonis`, repository `dotlens-mcp` and workflow file `release.yml`, with no environment
+- `NUGET_USER` repository secret holding the NuGet.org profile name (not the email address) of the policy's owner
 - All changes merged to `main`
 - CI passing on `main`
 
@@ -43,7 +44,7 @@ Pre-releases skip changelog validation. Release notes are auto-generated as "Pre
 5. Creates and pushes a git tag
 6. Builds, tests, and packs the NuGet package
 7. Creates a GitHub Release with the `.nupkg` and `.snupkg` attached
-8. Pushes to NuGet.org
+8. Pushes to NuGet.org with a one-hour API key that Trusted Publishing issues for the run
 9. On failure: cleans up the tag automatically
 
 ## Version Format
