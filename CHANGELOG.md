@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- The default `DOTLENS_TimeoutSeconds` is 60 seconds, up from 30, so `find_unused_code` on a large project finishes on a cold workspace.
+
 ## v1.1.0
 
 ### Added

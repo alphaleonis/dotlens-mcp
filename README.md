@@ -86,7 +86,7 @@ All options use the `DOTLENS_` prefix for environment variables:
 | `DOTLENS_AutoLoadSolution` | Auto-detect solution from working directory | `true` | - |
 | `DOTLENS_LogLevel` | Logging verbosity | `Warning` | Verbose, Debug, Information, Warning, Error, Fatal |
 | `DOTLENS_InstructionLevel` | Instructions the server sends to clients | `Detailed` | None, Brief, Detailed |
-| `DOTLENS_TimeoutSeconds` | Timeout for long-running operations | `30` | 1-600 |
+| `DOTLENS_TimeoutSeconds` | Timeout for long-running operations | `60` | 1-600 |
 | `DOTLENS_LoadWaitTimeoutSeconds` | Seconds to wait for in-progress load before returning "loading" status | `5` | 1-60 |
 | `DOTLENS_MaxLoadTimeoutSeconds` | Seconds a solution load may take before it is canceled | `300` | 30-1800 |
 | `DOTLENS_MaxDiagnostics` | Maximum diagnostics to return | `100` | 1-10000 |

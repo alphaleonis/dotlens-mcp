@@ -58,11 +58,11 @@ public class DotLensOptions
 
    /// <summary>
    /// Timeout in seconds for long-running operations.
-   /// Default: 30. Valid range: 1-600.
+   /// Default: 60. Valid range: 1-600.
    /// </summary>
    [Description("Timeout in seconds for operations (1-600)")]
    [Range(1, 600)]
-   public int TimeoutSeconds { get; set; } = 30;
+   public int TimeoutSeconds { get; set; } = 60;
 
    /// <summary>
    /// Whether to use absolute paths in responses instead of solution-relative paths.
