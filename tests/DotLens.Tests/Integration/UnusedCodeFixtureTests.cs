@@ -307,6 +307,33 @@ public class UnusedCodeFixtureTests : IClassFixture<UnusedCodeFixtureWorkspace>
          strict: true);
    }
 
+   /// <summary>
+   /// Live code reads the members of each type only through a deconstruction: positional patterns, a var pattern, a
+   /// switch arm, a deconstruction assignment and a foreach, over generated, hand-written and extension Deconstruct
+   /// methods. DerivedName's generated Deconstruct reads the Text that BaseName declares, and a nested var pattern
+   /// deconstructs NestedName. CustomDeconstructedName declares the Deconstruct that the compiler would generate, and it
+   /// reads no At. Nothing deconstructs UndeconstructedName or UndeconstructedManualName.
+   /// </summary>
+   [Fact]
+   public async Task FindUnusedCode_MembersReadThroughDeconstruction_ReportsOnlyWhatNothingDeconstructs()
+   {
+      var tool = new FindUnusedCodeTool(_fixture.Workspace);
+
+      var result = await tool.FindUnusedCodeAsync(
+         includeInternal: true, verbosity: ToolResultVerbosity.Full, maxResults: 500, cancellationToken: CT);
+
+      Assert.Equivalent(
+         new[]
+         {
+            (typeof(PropertySymbolResponse), "At", 15),
+            (typeof(PropertySymbolResponse), "Text", 36),
+            (typeof(MethodSymbolResponse), "Deconstruct", 38),
+            (typeof(PropertySymbolResponse), "At", 123),
+         },
+         UnusedSymbolsIn(result.Data, "Deconstruction.cs"),
+         strict: true);
+   }
+
    private static List<(Type Kind, string Name, int Line)> UnusedSymbolsIn(FindUnusedCodeResponse data, string fileName) =>
       data.UnusedSymbols
          .Where(s => Path.GetFileName(s.Location?.FilePath) == fileName)

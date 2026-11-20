@@ -972,7 +972,11 @@ internal static class AnalysisHelpers
       => record.GetMembers(WellKnownMemberNames.ObjectEquals).OfType<IMethodSymbol>()
          .FirstOrDefault(m => m.Parameters is [var parameter] && SymbolEqualityComparer.Default.Equals(parameter.Type, record));
 
-   private static IPropertySymbol? FindProperty(INamedTypeSymbol type, string name)
+   /// <summary>
+   /// Returns the property with the name that the type declares, else the nearest one that it inherits, or null when there
+   /// is none. A record's generated Deconstruct reads the property that this returns for each parameter's name.
+   /// </summary>
+   internal static IPropertySymbol? FindProperty(INamedTypeSymbol type, string name)
    {
       for (INamedTypeSymbol? current = type; current is not null; current = current.BaseType)
       {

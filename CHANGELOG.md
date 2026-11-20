@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - The default `DOTLENS_TimeoutSeconds` is 60 seconds, up from 30, so `find_unused_code` on a large project finishes on a cold workspace.
 
+### Fixed
+
+- `find_unused_code` counts reads through deconstruction: a positional pattern, a deconstruction assignment or a `foreach` that deconstructs uses the `Deconstruct` it calls, and a record's generated `Deconstruct` reads its positional properties. `find_references` and `analyze_method` list the `Deconstruct` call of a positional pattern.
+
 ## v1.1.0
 
 ### Added

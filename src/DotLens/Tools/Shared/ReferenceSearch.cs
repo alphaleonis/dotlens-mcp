@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace DotLens.Tools.Shared;
 
@@ -21,7 +22,8 @@ internal sealed record SymbolCallers(ISymbol? CallingSymbol, List<Location> Loca
 
 /// <summary>
 /// Finds references and callers with <see cref="SymbolFinder"/>, with its indexer references in null-conditional
-/// accesses replaced by a scan of the element bindings.
+/// accesses replaced by a scan of the element bindings. Find-references also adds the Deconstruct calls of positional
+/// patterns, see <see cref="FindPositionalPatternReferencesAsync"/>.
 /// </summary>
 /// <remarks>
 /// <see cref="SymbolFinder"/> reports a use in a file that several projects compile once for each project and each
@@ -63,6 +65,9 @@ internal static class ReferenceSearch
          }
       }
 
+      if (symbol is IMethodSymbol { Name: WellKnownMemberNames.DeconstructMethodName } deconstruct)
+         references.AddRange(await FindPositionalPatternReferencesAsync(solution, deconstruct, cancellationToken));
+
       if (indexers.Count == 0)
          return DistinctReferences(references);
 
@@ -74,6 +79,66 @@ internal static class ReferenceSearch
       }
 
       return DistinctReferences(references);
+   }
+
+   /// <summary>
+   /// Returns the positional patterns whose Deconstruct call binds to <paramref name="deconstruct"/>, in the projects
+   /// whose code can refer to it.
+   /// </summary>
+   /// <remarks>
+   /// <see cref="SymbolFinder"/> finds the Deconstruct calls of deconstruction assignments and of foreach, but not those of
+   /// positional patterns, as DeconstructionReferenceTests shows. A reference is at the parentheses that deconstruct:
+   /// the positional clause of a recursive pattern, or a parenthesized designation of a var pattern.
+   /// </remarks>
+   private static async Task<List<SourceReference>> FindPositionalPatternReferencesAsync(
+      Solution solution, IMethodSymbol deconstruct, CancellationToken cancellationToken)
+   {
+      var target = deconstruct.ReducedFrom ?? deconstruct;
+      var scope = GetSearchScope(solution, [target], cancellationToken);
+      var references = new List<SourceReference>();
+      foreach (var project in solution.Projects.Where(project => project.SupportsCompilation && (scope is null || scope.Contains(project.Id))))
+      {
+         IEnumerable<Document> documents = [.. project.Documents, .. await project.GetSourceGeneratedDocumentsAsync(cancellationToken)];
+         foreach (var document in documents)
+         {
+            if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root)
+               continue;
+
+            var patterns = root.DescendantNodes()
+               .Where(node => node is RecursivePatternSyntax { PositionalPatternClause: not null } || IsVarPatternDesignation(node))
+               .ToList();
+            if (patterns.Count == 0 || await document.GetSemanticModelAsync(cancellationToken) is not { } model)
+               continue;
+
+            foreach (var pattern in patterns)
+            {
+               if (model.GetOperation(pattern, cancellationToken) is IRecursivePatternOperation { DeconstructSymbol: IMethodSymbol bound }
+                  && IsSameSymbol(bound.ReducedFrom ?? bound, target))
+               {
+                  var parentheses = pattern is RecursivePatternSyntax { PositionalPatternClause: { } clause } ? clause : pattern;
+                  references.Add(new SourceReference(deconstruct, document, parentheses.GetLocation()));
+               }
+            }
+         }
+      }
+
+      return references;
+   }
+
+   /// <summary>
+   /// Returns whether the node is a parenthesized designation of a var pattern, at any depth. Each such designation
+   /// deconstructs, and the semantic model binds its pattern operation to the designation.
+   /// </summary>
+   private static bool IsVarPatternDesignation(SyntaxNode node)
+   {
+      if (node is not ParenthesizedVariableDesignationSyntax)
+         return false;
+
+      var outermost = node;
+      while (outermost.Parent is ParenthesizedVariableDesignationSyntax enclosing)
+         outermost = enclosing;
+
+      return outermost.Parent is VarPatternSyntax;
    }
 
    private static List<SourceReference> DistinctReferences(List<SourceReference> references)

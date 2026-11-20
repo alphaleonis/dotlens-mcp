@@ -28,6 +28,7 @@ internal sealed class UsageAnalysis
    private readonly Dictionary<IAssemblySymbol, bool> _hasFriendsOutsideSolution = new(SymbolEqualityComparer.Default);
    private readonly Dictionary<INamedTypeSymbol, IReadOnlyList<ISymbol?>> _typeUseReferrers = new(SymbolEqualityComparer.Default);
    private readonly Dictionary<ProjectId, Dictionary<string, List<ISymbol>>> _dataSourceIndexes = [];
+   private readonly Dictionary<INamedTypeSymbol, IReadOnlyList<INamedTypeSymbol>> _selfAndDerivedRecords = new(SymbolEqualityComparer.Default);
    private HashSet<string>? _solutionAssemblyNames;
 
    public UsageAnalysis(Solution solution, FrameworkEntryPoints frameworkEntryPoints)
@@ -260,6 +261,8 @@ internal sealed class UsageAnalysis
    /// <see cref="FrameworkEntryPoints.IsCalledThroughType"/>, also has the referrers of the type's uses in
    /// <c>typeof</c> and as a type argument.
    /// A member that a data source attribute names in a string also has the attribute's owner.
+   /// A property also has the generated record Deconstruct methods that read it, see
+   /// <see cref="GetGeneratedDeconstructReadersAsync"/>.
    /// </remarks>
    private async Task<IReadOnlyList<ISymbol?>> GetReferrersAsync(ISymbol symbol, CancellationToken cancellationToken)
    {
@@ -305,6 +308,12 @@ internal sealed class UsageAnalysis
       foreach (var owner in await GetDataSourceOwnersAsync(symbol, cancellationToken))
          Add(owner);
 
+      if (symbol is IPropertySymbol property)
+      {
+         foreach (var deconstruct in await GetGeneratedDeconstructReadersAsync(property, cancellationToken))
+            Add(deconstruct);
+      }
+
       _referrers[symbol] = referrers;
       return referrers;
 
@@ -315,6 +324,36 @@ internal sealed class UsageAnalysis
 
          hasRootReferrer |= referrer is null;
       }
+   }
+
+   /// <summary>
+   /// Returns the Deconstruct methods that the compiler generates for the property's record, or for a record that
+   /// derives from it, and that read the property.
+   /// </summary>
+   /// <remarks>
+   /// A generated Deconstruct has no code in source, so find-references sees none of its reads. It reads, for each
+   /// positional parameter, the property of the parameter's name, see <see cref="AnalysisHelpers.FindProperty"/>.
+   /// </remarks>
+   private async Task<IReadOnlyList<IMethodSymbol>> GetGeneratedDeconstructReadersAsync(IPropertySymbol property, CancellationToken cancellationToken)
+   {
+      if (property is not { IsStatic: false, IsIndexer: false, ContainingType: { IsRecord: true } record })
+         return [];
+
+      if (!_selfAndDerivedRecords.TryGetValue(record, out var records))
+      {
+         records = record is { TypeKind: TypeKind.Class, IsSealed: false }
+            ? [record, .. (await SymbolFinder.FindDerivedClassesAsync(record, _solution, transitive: true, cancellationToken: cancellationToken)).Where(derived => derived.IsRecord)]
+            : [record];
+         _selfAndDerivedRecords[record] = records;
+      }
+
+      return records
+         .SelectMany(candidate => candidate.GetMembers(WellKnownMemberNames.DeconstructMethodName)
+            .OfType<IMethodSymbol>()
+            .Where(deconstruct => deconstruct.IsImplicitlyDeclared
+               && deconstruct.Parameters.Any(parameter =>
+                  AnalysisHelpers.FindProperty(candidate, parameter.Name) is { } read && IsSameDefinition(read, property))))
+         .ToList();
    }
 
    /// <summary>
